@@ -248,7 +248,7 @@ static int __init device_init(void)
         return -ENOMEM;
     }
 
-    pr_debug("dma_handle: %#llx\n", dma_handle);
+    pr_debug("dma_handle: %#llx\n", (unsigned long long)dma_handle);
 
     rc = misc_register(&sample_device);
     if (rc!=0) {
