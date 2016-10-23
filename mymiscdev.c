@@ -12,6 +12,8 @@
 #include <linux/dma-mapping.h>
 #include <linux/dma-direction.h>
 #include <asm/uaccess.h>
+#include <linux/wait.h>
+#include <linux/poll.h>
 
 #include "mymiscdev_ioctl.h"
 
@@ -21,6 +23,7 @@ static ssize_t device_read(struct file *, char __user *, size_t, loff_t *);
 static ssize_t device_write(struct file *, const char __user *, size_t, loff_t *);
 static int device_mmap(struct file *, struct vm_area_struct *);
 static long device_ioctl(struct file *, unsigned int cmd, unsigned long arg);
+static unsigned int device_poll(struct file *, poll_table *wait);
 
 static int user_scatter_gather(struct file *filp, char __user *userbuf, size_t nbytes);
 
@@ -33,6 +36,7 @@ static struct file_operations sample_fops = {
     .release = device_release,
     .llseek = no_llseek,
     .unlocked_ioctl = device_ioctl,
+    .poll = device_poll,
 };
 
 struct miscdevice sample_device = {
@@ -45,6 +49,11 @@ struct miscdevice sample_device = {
 #define DMABUFSIZE 1048576
 static void *alloc_ptr;
 static dma_addr_t dma_handle;
+
+static DECLARE_WAIT_QUEUE_HEAD(device_read_wait);
+static unsigned int readable_count;
+
+
 
 static int device_open(struct inode *inodep, struct file *filp)
 {
@@ -189,10 +198,36 @@ cleanup_alloc:
     return errcode;
 }
 
-static ssize_t device_read(struct file *filp, char __user *userbuf, size_t nbytes, loff_t *f_pos)
+static ssize_t
+device_read(struct file *filp, char __user *userbuf, size_t nbytes, loff_t *f_pos)
 {
-    pr_debug("device_read %zu, %llu\n", nbytes, *f_pos);
-    return 0;
+    int nonblock = filp->f_flags & O_NONBLOCK;
+    ssize_t readcnt;
+
+    pr_debug("%s %zu\n", __func__, nbytes);
+
+    if (nbytes==0) {
+        return 0;
+    }
+
+    while (1) {
+        if (readable_count > 0) {
+            readcnt = readable_count <= nbytes ? readable_count : nbytes;    
+            readable_count -= readcnt;
+            return readcnt;
+        }
+
+        if (nonblock) {
+            return -EAGAIN;
+        }
+
+        wait_event_interruptible(device_read_wait, readable_count > 0);
+
+        if (signal_pending(current)) {
+            pr_debug("%s got signal\n", __func__);
+            return -ERESTARTSYS;
+        }
+    }
 }
 
 static ssize_t device_write(struct file *filp, const char __user *userbuf, size_t nbytes, loff_t *f_pos)
@@ -234,6 +269,18 @@ static int device_mmap(struct file *filp, struct vm_area_struct *vma)
         }
     }
     return rc;
+}
+
+static unsigned int
+device_poll(struct file *filp, poll_table *wait)
+{
+    unsigned int mask = 0;
+
+    poll_wait(filp, &device_read_wait, wait);
+    if (readable_count > 0) {
+        mask |= POLLIN | POLLRDNORM;
+    }
+    return mask;
 }
 
 static int __init device_init(void)
