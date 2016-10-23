@@ -205,7 +205,6 @@ static ssize_t
 device_read(struct file *filp, char __user *userbuf, size_t nbytes, loff_t *f_pos)
 {
     int nonblock = filp->f_flags & O_NONBLOCK;
-    ssize_t readcnt;
 
     pr_debug("%s %zu\n", __func__, nbytes);
 
@@ -215,7 +214,7 @@ device_read(struct file *filp, char __user *userbuf, size_t nbytes, loff_t *f_po
 
     while (1) {
         if (readable_count > 0) {
-            readcnt = readable_count <= nbytes ? readable_count : nbytes;    
+            unsigned int readcnt = min_t(size_t, readable_count, nbytes);
             readable_count -= readcnt;
             return readcnt;
         }
