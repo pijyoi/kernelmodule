@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <signal.h>
 
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -10,6 +11,10 @@
 #include <unistd.h>
 
 #include "mymiscdev_ioctl.h"
+
+void sigint_handler(int sig)
+{
+}
 
 int main()
 {
@@ -40,6 +45,8 @@ int main()
     if (rc==-1) {
         perror("read");
     }
+
+    signal(SIGINT, sigint_handler);
 
 	printf("attempting read\n");
     rc = read(fd, memptr, bufsize);

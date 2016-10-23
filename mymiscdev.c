@@ -255,7 +255,9 @@ device_read(struct file *filp, char __user *userbuf, size_t nbytes, loff_t *f_po
 
         if (signal_pending(current)) {
             pr_debug("%s got signal\n", __func__);
-            return -ERESTARTSYS;
+            // NOTE: if we return ERESTARTSYS, userspace will not see EINTR
+            // return -ERESTARTSYS;
+            return -EINTR;
         }
     }
 }
