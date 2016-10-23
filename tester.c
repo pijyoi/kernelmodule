@@ -13,7 +13,7 @@
 
 int main()
 {
-    int fd = open("/dev/mymiscdev", O_RDWR | O_NONBLOCK);
+    int fd = open("/dev/mymiscdev", O_RDWR);
     if (fd==-1) {
         perror("open");
         return -1;
@@ -34,17 +34,21 @@ int main()
     rc = posix_memalign(&memptr, 128, bufsize);
     assert(memptr!=0);
 
-    rc = read(fd, mapptr, bufsize);
-    if (rc==-1) {
-        perror("read");
-    }
-
     printf("%p %zu\n", memptr, bufsize);
     struct mymiscdev_ioctl param = { memptr, bufsize };
     rc = ioctl(fd, SAMPLE_IOCTL_CMD_1, &param);
     if (rc==-1) {
         perror("read");
     }
+
+	printf("attempting read\n");
+    rc = read(fd, memptr, bufsize);
+    if (rc==-1) {
+        perror("read");
+    }
+	else {
+		printf("read returned %d\n", rc);
+	}
 
     free(memptr);
     close(fd);

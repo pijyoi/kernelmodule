@@ -14,6 +14,8 @@
 #include <asm/uaccess.h>
 #include <linux/wait.h>
 #include <linux/poll.h>
+#include <linux/gpio.h>
+#include <linux/interrupt.h>
 
 #include "mymiscdev_ioctl.h"
 
@@ -53,7 +55,17 @@ static dma_addr_t dma_handle;
 static DECLARE_WAIT_QUEUE_HEAD(device_read_wait);
 static unsigned int readable_count;
 
+static unsigned int gpioButton = 17;	// specific to your setup
+static unsigned int gpioIrqNumber;
 
+static irq_handler_t
+gpio_irq_handler(int irq, void *dev_id, struct pt_regs *regs)
+{
+	readable_count++;
+	pr_debug("interrupt: %u\n", readable_count);
+	wake_up_interruptible(&device_read_wait);
+	return (irq_handler_t)IRQ_HANDLED;
+}
 
 static int
 device_open(struct inode *inodep, struct file *filp)
@@ -249,7 +261,7 @@ device_mmap(struct file *filp, struct vm_area_struct *vma)
         if (length > DMABUFSIZE) {
             return -EIO;
         }
-        #if 0
+        #if 1
         rc = dma_mmap_coherent(NULL, vma, alloc_ptr, dma_handle, length);
         if (rc!=0) {
             pr_warning("dma_mmap_coherent failed %d\n", rc);
@@ -301,12 +313,23 @@ static int __init device_init(void)
 
     pr_debug("dma_handle: %#llx\n", (unsigned long long)dma_handle);
 
+	gpio_request_one(gpioButton, GPIOF_DIR_IN | GPIOF_EXPORT_DIR_FIXED, "button");
+	gpioIrqNumber = gpio_to_irq(gpioButton);
+	rc = request_irq(gpioIrqNumber, (irq_handler_t)gpio_irq_handler, IRQF_TRIGGER_RISING,
+		"mymiscdev", NULL);
+	if (rc!=0) {
+		pr_warning("request_irq failed %d\n", rc);
+		gpioIrqNumber = 0;
+		gpio_unexport(gpioButton);
+		gpio_free(gpioButton);
+	}
+
     rc = misc_register(&sample_device);
     if (rc!=0) {
         pr_warning("misc_register failed %d\n", rc);
         dma_free_coherent(NULL, DMABUFSIZE, alloc_ptr, dma_handle);
     }
-    return rc;
+ 	return rc;
 }
 
 static void __exit device_exit(void)
@@ -314,6 +337,12 @@ static void __exit device_exit(void)
     pr_debug("%s\n", __func__);
 
     misc_deregister(&sample_device);
+
+	if (gpioIrqNumber) {
+		free_irq(gpioIrqNumber, NULL);
+		gpio_unexport(gpioButton);
+		gpio_free(gpioButton);
+	}
 
     dma_free_coherent(NULL, DMABUFSIZE, alloc_ptr, dma_handle);
 }
