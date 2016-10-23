@@ -55,24 +55,27 @@ static unsigned int readable_count;
 
 
 
-static int device_open(struct inode *inodep, struct file *filp)
+static int
+device_open(struct inode *inodep, struct file *filp)
 {
-    pr_debug("device_open\n");
+    pr_debug("%s\n", __func__);
     nonseekable_open(inodep, filp);
     return 0;
 }
 
-static int device_release(struct inode *inodep, struct file *filp)
+static int
+device_release(struct inode *inodep, struct file *filp)
 {
-    pr_debug("device_release\n");
+    pr_debug("%s\n", __func__);
     return 0;
 }
 
-static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+static long
+device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
     int retcode = -ENOTTY;
 
-    pr_debug("device_ioctl\n");
+    pr_debug("%s\n", __func__);
 
     switch (cmd) {
     case SAMPLE_IOCTL_CMD_1:
@@ -230,13 +233,15 @@ device_read(struct file *filp, char __user *userbuf, size_t nbytes, loff_t *f_po
     }
 }
 
-static ssize_t device_write(struct file *filp, const char __user *userbuf, size_t nbytes, loff_t *f_pos)
+static ssize_t
+device_write(struct file *filp, const char __user *userbuf, size_t nbytes, loff_t *f_pos)
 {
-    pr_debug("device_write %zu, %llu\n", nbytes, *f_pos);
+    pr_debug("%s %zu\n", __func__, nbytes);
     return nbytes;
 }
 
-static int device_mmap(struct file *filp, struct vm_area_struct *vma)
+static int
+device_mmap(struct file *filp, struct vm_area_struct *vma)
 {
     int rc;
     if (vma->vm_pgoff == 0)
@@ -287,7 +292,7 @@ static int __init device_init(void)
 {
     int rc;
 
-    pr_debug("module_init\n");
+    pr_debug("%s\n", __func__);
 
     alloc_ptr = dma_alloc_coherent(NULL, DMABUFSIZE, &dma_handle, GFP_KERNEL);
     if (!alloc_ptr) {
@@ -307,7 +312,7 @@ static int __init device_init(void)
 
 static void __exit device_exit(void)
 {
-    pr_debug("module_exit\n");
+    pr_debug("%s\n", __func__);
 
     misc_deregister(&sample_device);
 
