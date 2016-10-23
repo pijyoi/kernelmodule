@@ -53,17 +53,32 @@ static void *alloc_ptr;
 static dma_addr_t dma_handle;
 
 static DECLARE_WAIT_QUEUE_HEAD(device_read_wait);
+static unsigned int pending_intcnt;
 static unsigned int readable_count;
 
 static unsigned int gpioButton = 17;	// specific to your setup
 static unsigned int gpioIrqNumber;
 
+static void
+gpio_do_tasklet(unsigned long data)
+{
+	// NOTE: another interrupt could be delivered while the tasklet is executing
+
+	unsigned int saved_intcnt = pending_intcnt;
+	pending_intcnt = 0;
+
+	readable_count++;
+	pr_debug("interrupt: %u %u\n", saved_intcnt, readable_count);
+	wake_up_interruptible(&device_read_wait);
+}
+
+DECLARE_TASKLET(gpio_tasklet, gpio_do_tasklet, 0);
+
 static irq_handler_t
 gpio_irq_handler(int irq, void *dev_id, struct pt_regs *regs)
 {
-	readable_count++;
-	pr_debug("interrupt: %u\n", readable_count);
-	wake_up_interruptible(&device_read_wait);
+	pending_intcnt++;
+	tasklet_schedule(&gpio_tasklet);
 	return (irq_handler_t)IRQ_HANDLED;
 }
 
