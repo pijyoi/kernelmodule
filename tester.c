@@ -13,7 +13,7 @@
 
 int main()
 {
-    int fd = open("/dev/simple_misc", O_RDWR);
+    int fd = open("/dev/mymiscdev", O_RDWR | O_NONBLOCK);
     if (fd==-1) {
         perror("open");
         return -1;
@@ -34,9 +34,6 @@ int main()
     rc = posix_memalign(&memptr, 128, bufsize);
     assert(memptr!=0);
 
-    // get_user_pages will fail
-    // but that's okay. we already know the physical address.
-    // it doesn't make sense to convert from physical to virtual then back to physical
     rc = read(fd, mapptr, bufsize);
     if (rc==-1) {
         perror("read");
