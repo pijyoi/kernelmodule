@@ -75,12 +75,12 @@ gpio_do_tasklet(unsigned long data)
 
 DECLARE_TASKLET(gpio_tasklet, gpio_do_tasklet, 0);
 
-static irq_handler_t
-gpio_irq_handler(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t
+gpio_irq_handler(int irq, void *dev_id)
 {
 	pending_intcnt++;
 	tasklet_schedule(&gpio_tasklet);
-	return (irq_handler_t)IRQ_HANDLED;
+	return IRQ_HANDLED;
 }
 
 static int
@@ -329,7 +329,7 @@ setup_gpio(void)
     }
 
     gpioIrqNumber = gpio_to_irq(gpioButton);
-    rc = request_irq(gpioIrqNumber, (irq_handler_t)gpio_irq_handler, IRQF_TRIGGER_RISING,
+    rc = request_irq(gpioIrqNumber, gpio_irq_handler, IRQF_TRIGGER_RISING,
         "mymiscdev", NULL);
     if (rc!=0) {
         pr_warning("request_irq failed %d\n", rc);
