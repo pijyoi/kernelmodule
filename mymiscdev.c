@@ -16,6 +16,8 @@
 #include <linux/poll.h>
 #include <linux/gpio.h>
 #include <linux/interrupt.h>
+#include <linux/sched.h>
+#include <linux/atomic.h>
 
 #include "mymiscdev_ioctl.h"
 
@@ -53,24 +55,23 @@ static void *alloc_ptr;
 static dma_addr_t dma_handle;
 
 static DECLARE_WAIT_QUEUE_HEAD(device_read_wait);
-static unsigned int pending_intcnt;
-static unsigned int readable_count;
+static atomic_t hardirq_cnt = ATOMIC_INIT(0);
+static unsigned int readable_count;     // FIXME: not atomic
 
 bool have_gpio = true;
-static unsigned int gpioButton = 17;	// specific to your setup
+static unsigned int gpioButton = 17;    // specific to your setup
 static unsigned int gpioIrqNumber;
 
 static void
 gpio_do_tasklet(unsigned long data)
 {
-	// NOTE: another interrupt could be delivered while the tasklet is executing
+    // NOTE: another interrupt could be delivered while the tasklet is executing
 
-	unsigned int saved_intcnt = pending_intcnt;
-	pending_intcnt = 0;
+    int saved_hardirq_cnt = atomic_xchg(&hardirq_cnt, 0);
 
-	readable_count++;
-	pr_debug("interrupt: %u %u\n", saved_intcnt, readable_count);
-	wake_up_interruptible(&device_read_wait);
+    readable_count++;
+    pr_debug("interrupt: %d %u\n", saved_hardirq_cnt, readable_count);
+    wake_up_interruptible(&device_read_wait);
 }
 
 DECLARE_TASKLET(gpio_tasklet, gpio_do_tasklet, 0);
@@ -78,9 +79,9 @@ DECLARE_TASKLET(gpio_tasklet, gpio_do_tasklet, 0);
 static irqreturn_t
 gpio_irq_handler(int irq, void *dev_id)
 {
-	pending_intcnt++;
-	tasklet_schedule(&gpio_tasklet);
-	return IRQ_HANDLED;
+    atomic_inc(&hardirq_cnt);
+    tasklet_schedule(&gpio_tasklet);
+    return IRQ_HANDLED;
 }
 
 static int
@@ -321,7 +322,7 @@ static void
 setup_gpio(void)
 {
     int rc;
-	rc = gpio_request_one(gpioButton, GPIOF_DIR_IN | GPIOF_EXPORT_DIR_FIXED, "button");
+    rc = gpio_request_one(gpioButton, GPIOF_DIR_IN | GPIOF_EXPORT_DIR_FIXED, "button");
     if (rc!=0) {
         pr_warning("gpio_request_one failed %d\n", rc);
         have_gpio = false;
@@ -345,11 +346,11 @@ setup_gpio(void)
 static void
 cleanup_gpio(void)
 {
-	if (have_gpio) {
-		free_irq(gpioIrqNumber, NULL);
-		gpio_unexport(gpioButton);
-		gpio_free(gpioButton);
-	}
+    if (have_gpio) {
+        free_irq(gpioIrqNumber, NULL);
+        gpio_unexport(gpioButton);
+        gpio_free(gpioButton);
+    }
 }
 
 static int __init device_init(void)
@@ -373,7 +374,7 @@ static int __init device_init(void)
         pr_warning("misc_register failed %d\n", rc);
         dma_free_coherent(NULL, DMABUFSIZE, alloc_ptr, dma_handle);
     }
- 	return rc;
+    return rc;
 }
 
 static void __exit device_exit(void)
