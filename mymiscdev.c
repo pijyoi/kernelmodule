@@ -56,7 +56,7 @@ static dma_addr_t dma_handle;
 
 static DECLARE_WAIT_QUEUE_HEAD(device_read_wait);
 static atomic_t hardirq_cnt = ATOMIC_INIT(0);
-static unsigned int readable_count;     // FIXME: not atomic
+static unsigned int readable_count;
 
 bool have_gpio = true;
 static unsigned int gpioButton = 17;    // specific to your setup
@@ -68,9 +68,15 @@ gpio_do_tasklet(unsigned long data)
     // NOTE: another interrupt could be delivered while the tasklet is executing
 
     int saved_hardirq_cnt = atomic_xchg(&hardirq_cnt, 0);
+    unsigned int saved_readable_count;
 
-    readable_count++;
-    pr_debug("interrupt: %d %u\n", saved_hardirq_cnt, readable_count);
+    spin_lock(&device_read_wait.lock);
+
+    saved_readable_count = ++readable_count;
+
+    spin_unlock(&device_read_wait.lock);
+
+    pr_debug("interrupt: %d %u\n", saved_hardirq_cnt, saved_readable_count);
     wake_up_interruptible(&device_read_wait);
 }
 
@@ -235,6 +241,7 @@ device_read(struct file *filp, char __user *userbuf, size_t nbytes, loff_t *f_po
 {
     int ret;
     int nonblock = filp->f_flags & O_NONBLOCK;
+    unsigned int readcnt;
 
     pr_debug("%s %zu\n", __func__, nbytes);
 
@@ -242,24 +249,24 @@ device_read(struct file *filp, char __user *userbuf, size_t nbytes, loff_t *f_po
         return 0;
     }
 
-    while (1) {
-        if (readable_count > 0) {
-            unsigned int readcnt = min_t(size_t, readable_count, nbytes);
-            readable_count -= readcnt;
-            return readcnt;
-        }
+    if (readable_count==0 && nonblock)
+        return -EAGAIN;
 
-        if (nonblock) {
-            return -EAGAIN;
-        }
-
-        ret = wait_event_interruptible(device_read_wait, readable_count > 0);
-        if (ret==-ERESTARTSYS) {
-            pr_debug("%s got signal\n", __func__);
-            // NOTE: if we return ERESTARTSYS, userspace will not see EINTR
-            return -EINTR;
-        }
+    ret = wait_event_interruptible(device_read_wait, readable_count > 0);
+    if (ret==-ERESTARTSYS) {
+        pr_debug("%s got signal\n", __func__);
+        // NOTE: if we return ERESTARTSYS, userspace will not see EINTR
+        return -EINTR;
     }
+
+    spin_lock_bh(&device_read_wait.lock);
+
+    readcnt = min_t(size_t, readable_count, nbytes);
+    readable_count -= readcnt;
+
+    spin_unlock_bh(&device_read_wait.lock);
+
+    return readcnt;
 }
 
 static ssize_t
