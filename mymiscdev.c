@@ -233,6 +233,7 @@ cleanup_alloc:
 static ssize_t
 device_read(struct file *filp, char __user *userbuf, size_t nbytes, loff_t *f_pos)
 {
+    int ret;
     int nonblock = filp->f_flags & O_NONBLOCK;
 
     pr_debug("%s %zu\n", __func__, nbytes);
@@ -252,12 +253,10 @@ device_read(struct file *filp, char __user *userbuf, size_t nbytes, loff_t *f_po
             return -EAGAIN;
         }
 
-        wait_event_interruptible(device_read_wait, readable_count > 0);
-
-        if (signal_pending(current)) {
+        ret = wait_event_interruptible(device_read_wait, readable_count > 0);
+        if (ret==-ERESTARTSYS) {
             pr_debug("%s got signal\n", __func__);
             // NOTE: if we return ERESTARTSYS, userspace will not see EINTR
-            // return -ERESTARTSYS;
             return -EINTR;
         }
     }
