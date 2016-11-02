@@ -58,8 +58,9 @@ static dma_addr_t dma_handle;
 static DECLARE_WAIT_QUEUE_HEAD(device_read_wait);
 static atomic_t hardirq_cnt = ATOMIC_INIT(0);
 
-bool have_gpio = true;
-static unsigned int gpioButton = 17;    // specific to your setup
+static int gpioButton = -1;    // specific to your setup
+module_param(gpioButton, int, 0);
+
 static unsigned int gpioIrqNumber;
 
 DEFINE_KFIFO(fifo_timeval, struct timeval, 32);
@@ -344,7 +345,7 @@ setup_gpio(void)
     rc = gpio_request_one(gpioButton, GPIOF_DIR_IN | GPIOF_EXPORT_DIR_FIXED, "button");
     if (rc!=0) {
         pr_warning("gpio_request_one failed %d\n", rc);
-        have_gpio = false;
+        gpioButton = -1;
         return;
     }
 
@@ -355,21 +356,17 @@ setup_gpio(void)
         pr_warning("request_irq failed %d\n", rc);
         gpio_unexport(gpioButton);
         gpio_free(gpioButton);
-        have_gpio = false;
+        gpioButton = -1;
         return;
     }
-
-    have_gpio = true;
 }
 
 static void
 cleanup_gpio(void)
 {
-    if (have_gpio) {
-        free_irq(gpioIrqNumber, NULL);
-        gpio_unexport(gpioButton);
-        gpio_free(gpioButton);
-    }
+    free_irq(gpioIrqNumber, NULL);
+    gpio_unexport(gpioButton);
+    gpio_free(gpioButton);
 }
 
 static int __init device_init(void)
@@ -386,7 +383,8 @@ static int __init device_init(void)
 
     pr_debug("dma_handle: %#llx\n", (unsigned long long)dma_handle);
 
-    setup_gpio();
+    if (gpioButton >= 0)
+        setup_gpio();
 
     rc = misc_register(&sample_device);
     if (rc!=0) {
@@ -402,7 +400,8 @@ static void __exit device_exit(void)
 
     misc_deregister(&sample_device);
 
-    cleanup_gpio();
+    if (gpioButton >= 0)
+        cleanup_gpio();
 
     dma_free_coherent(NULL, DMABUFSIZE, alloc_ptr, dma_handle);
 }
