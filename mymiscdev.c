@@ -18,6 +18,7 @@
 #include <linux/interrupt.h>
 #include <linux/sched.h>
 #include <linux/atomic.h>
+#include <linux/kfifo.h>
 
 #include "mymiscdev_ioctl.h"
 
@@ -56,11 +57,13 @@ static dma_addr_t dma_handle;
 
 static DECLARE_WAIT_QUEUE_HEAD(device_read_wait);
 static atomic_t hardirq_cnt = ATOMIC_INIT(0);
-static unsigned int readable_count;
 
 bool have_gpio = true;
 static unsigned int gpioButton = 17;    // specific to your setup
 static unsigned int gpioIrqNumber;
+
+DEFINE_KFIFO(fifo_timeval, struct timeval, 32);
+DEFINE_KFIFO(fifo_timestamp, char, 4096);
 
 static void
 gpio_do_tasklet(unsigned long data)
@@ -68,15 +71,21 @@ gpio_do_tasklet(unsigned long data)
     // NOTE: another interrupt could be delivered while the tasklet is executing
 
     int saved_hardirq_cnt = atomic_xchg(&hardirq_cnt, 0);
-    unsigned int saved_readable_count;
+    struct timeval tv;
+    char strbuf[16];
+    int idx;
 
-    spin_lock(&device_read_wait.lock);
+    // any interrupts that arrive during the execution of this tasklet will
+    // be processed by the next tasklet_schedule
+    for (idx=0; idx < saved_hardirq_cnt; idx++) {
+        int ret = kfifo_out(&fifo_timeval, &tv, 1);
+        BUG_ON(ret==0);
+        snprintf(strbuf, sizeof(strbuf), "%08u.%06u",
+                (int)(tv.tv_sec % 100000000), (int)(tv.tv_usec));
+        kfifo_in(&fifo_timestamp, strbuf, sizeof(strbuf));
+    }
 
-    saved_readable_count = ++readable_count;
-
-    spin_unlock(&device_read_wait.lock);
-
-    pr_debug("interrupt: %d %u\n", saved_hardirq_cnt, saved_readable_count);
+    pr_debug("interrupt: %d\n", saved_hardirq_cnt);
     wake_up_interruptible(&device_read_wait);
 }
 
@@ -85,6 +94,10 @@ DECLARE_TASKLET(gpio_tasklet, gpio_do_tasklet, 0);
 static irqreturn_t
 gpio_irq_handler(int irq, void *dev_id)
 {
+    struct timeval tv;
+    do_gettimeofday(&tv);
+
+    kfifo_in(&fifo_timeval, &tv, 1);
     atomic_inc(&hardirq_cnt);
     tasklet_schedule(&gpio_tasklet);
     return IRQ_HANDLED;
@@ -241,7 +254,7 @@ device_read(struct file *filp, char __user *userbuf, size_t nbytes, loff_t *f_po
 {
     int ret;
     int nonblock = filp->f_flags & O_NONBLOCK;
-    unsigned int readcnt;
+    int copied;
 
     pr_debug("%s %zu\n", __func__, nbytes);
 
@@ -249,24 +262,23 @@ device_read(struct file *filp, char __user *userbuf, size_t nbytes, loff_t *f_po
         return 0;
     }
 
-    if (readable_count==0 && nonblock)
+    if (kfifo_is_empty(&fifo_timestamp) && nonblock)
         return -EAGAIN;
 
-    ret = wait_event_interruptible(device_read_wait, readable_count > 0);
+    ret = wait_event_interruptible(device_read_wait, !kfifo_is_empty(&fifo_timestamp));
     if (ret==-ERESTARTSYS) {
         pr_debug("%s got signal\n", __func__);
         // NOTE: if we return ERESTARTSYS, userspace will not see EINTR
         return -EINTR;
     }
 
-    spin_lock_bh(&device_read_wait.lock);
+    // spin_lock_bh(&device_read_wait.lock);
 
-    readcnt = min_t(size_t, readable_count, nbytes);
-    readable_count -= readcnt;
+    ret = kfifo_to_user(&fifo_timestamp, userbuf, nbytes, &copied);
 
-    spin_unlock_bh(&device_read_wait.lock);
+    // spin_unlock_bh(&device_read_wait.lock);
 
-    return readcnt;
+    return ret ? ret : copied;
 }
 
 static ssize_t
@@ -318,7 +330,7 @@ device_poll(struct file *filp, poll_table *wait)
     unsigned int mask = 0;
 
     poll_wait(filp, &device_read_wait, wait);
-    if (readable_count > 0) {
+    if (!kfifo_is_empty(&fifo_timestamp)) {
         mask |= POLLIN | POLLRDNORM;
     }
     return mask;
