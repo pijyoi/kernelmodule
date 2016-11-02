@@ -82,6 +82,7 @@ gpio_do_tasklet(unsigned long data)
         BUG_ON(ret==0);
         snprintf(strbuf, sizeof(strbuf), "%08u.%06u",
                 (int)(tv.tv_sec % 100000000), (int)(tv.tv_usec));
+        strbuf[sizeof(strbuf)-1] = '\n';
         kfifo_in(&fifo_timestamp, strbuf, sizeof(strbuf));
     }
 
