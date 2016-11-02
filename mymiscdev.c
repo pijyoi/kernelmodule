@@ -61,8 +61,6 @@ static atomic_t hardirq_cnt = ATOMIC_INIT(0);
 static int gpioButton = -1;    // specific to your setup
 module_param(gpioButton, int, 0);
 
-static int gpioIrqNumber = -1;
-
 DEFINE_KFIFO(fifo_timeval, struct timeval, 32);
 DEFINE_KFIFO(fifo_timestamp, char, 4096);
 
@@ -342,19 +340,20 @@ static void
 setup_gpio(struct device *dev)
 {
     int rc;
+    unsigned int irqnum;
+
     rc = devm_gpio_request_one(dev, gpioButton,
             GPIOF_DIR_IN | GPIOF_EXPORT_DIR_FIXED, "button");
     if (rc!=0) {
-        pr_warning("gpio_request_one failed %d\n", rc);
+        dev_warn(dev, "gpio_request_one failed %d\n", rc);
         return;
     }
 
-    gpioIrqNumber = gpio_to_irq(gpioButton);
-    rc = request_irq(gpioIrqNumber, gpio_irq_handler, IRQF_TRIGGER_RISING,
+    irqnum = gpio_to_irq(gpioButton);
+    rc = devm_request_irq(dev, irqnum, gpio_irq_handler, IRQF_TRIGGER_RISING,
         "mymiscdev", NULL);
     if (rc!=0) {
-        pr_warning("request_irq failed %d\n", rc);
-        gpioIrqNumber = -1;
+        dev_warn(dev, "request_irq failed %d\n", rc);
         return;
     }
 }
@@ -388,9 +387,6 @@ static int __init device_init(void)
 static void __exit device_exit(void)
 {
     pr_debug("%s\n", __func__);
-
-    if (gpioIrqNumber >= 0)
-        free_irq(gpioIrqNumber, NULL);
 
     misc_deregister(&sample_device);
 
