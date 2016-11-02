@@ -61,7 +61,7 @@ static atomic_t hardirq_cnt = ATOMIC_INIT(0);
 static int gpioButton = -1;    // specific to your setup
 module_param(gpioButton, int, 0);
 
-static unsigned int gpioIrqNumber;
+static int gpioIrqNumber = -1;
 
 DEFINE_KFIFO(fifo_timeval, struct timeval, 32);
 DEFINE_KFIFO(fifo_timestamp, char, 4096);
@@ -339,13 +339,13 @@ device_poll(struct file *filp, poll_table *wait)
 }
 
 static void
-setup_gpio(void)
+setup_gpio(struct device *dev)
 {
     int rc;
-    rc = gpio_request_one(gpioButton, GPIOF_DIR_IN | GPIOF_EXPORT_DIR_FIXED, "button");
+    rc = devm_gpio_request_one(dev, gpioButton,
+            GPIOF_DIR_IN | GPIOF_EXPORT_DIR_FIXED, "button");
     if (rc!=0) {
         pr_warning("gpio_request_one failed %d\n", rc);
-        gpioButton = -1;
         return;
     }
 
@@ -354,19 +354,9 @@ setup_gpio(void)
         "mymiscdev", NULL);
     if (rc!=0) {
         pr_warning("request_irq failed %d\n", rc);
-        gpio_unexport(gpioButton);
-        gpio_free(gpioButton);
-        gpioButton = -1;
+        gpioIrqNumber = -1;
         return;
     }
-}
-
-static void
-cleanup_gpio(void)
-{
-    free_irq(gpioIrqNumber, NULL);
-    gpio_unexport(gpioButton);
-    gpio_free(gpioButton);
 }
 
 static int __init device_init(void)
@@ -383,14 +373,15 @@ static int __init device_init(void)
 
     pr_debug("dma_handle: %#llx\n", (unsigned long long)dma_handle);
 
-    if (gpioButton >= 0)
-        setup_gpio();
-
     rc = misc_register(&sample_device);
     if (rc!=0) {
         pr_warning("misc_register failed %d\n", rc);
         dma_free_coherent(NULL, DMABUFSIZE, alloc_ptr, dma_handle);
     }
+
+    if (gpioButton >= 0)
+        setup_gpio(sample_device.this_device);
+
     return rc;
 }
 
@@ -398,10 +389,10 @@ static void __exit device_exit(void)
 {
     pr_debug("%s\n", __func__);
 
-    misc_deregister(&sample_device);
+    if (gpioIrqNumber >= 0)
+        free_irq(gpioIrqNumber, NULL);
 
-    if (gpioButton >= 0)
-        cleanup_gpio();
+    misc_deregister(&sample_device);
 
     dma_free_coherent(NULL, DMABUFSIZE, alloc_ptr, dma_handle);
 }
