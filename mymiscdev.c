@@ -306,7 +306,7 @@ device_mmap(struct file *filp, struct vm_area_struct *vma)
         #else
         // vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
         rc = remap_pfn_range(vma, vma->vm_start,
-                             PHYS_PFN(virt_to_phys(bus_to_virt(dma_handle))),
+                             PHYS_PFN(virt_to_phys(alloc_ptr)),
                              length, vma->vm_page_prot);
         if (rc!=0) {
             pr_warning("remap_pfn_range failed %d\n", rc);
