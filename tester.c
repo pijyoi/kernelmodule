@@ -43,7 +43,7 @@ int main()
     struct mymiscdev_ioctl param = { memptr, bufsize };
     rc = ioctl(fd, SAMPLE_IOCTL_CMD_1, &param);
     if (rc==-1) {
-        perror("read");
+        perror("ioctl");
     }
 
     signal(SIGINT, sigint_handler);
