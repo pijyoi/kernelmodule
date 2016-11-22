@@ -378,6 +378,10 @@ static int __init device_init(void)
         dma_free_coherent(NULL, DMABUFSIZE, alloc_ptr, dma_handle);
     }
 
+    if (dma_set_mask_and_coherent(sample_device.this_device, DMA_BIT_MASK(32))) {
+        pr_warning("mymiscdev: No suitable DMA available\n");
+    }
+
     if (gpioButton >= 0)
         setup_gpio(sample_device.this_device);
 
