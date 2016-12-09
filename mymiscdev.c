@@ -365,6 +365,10 @@ static int mymiscdev_probe(struct platform_device *pdev)
 
     pr_debug("%s\n", __func__);
 
+    if (dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32))) {
+        pr_warning("mymiscdev: No suitable DMA available\n");
+    }
+
     alloc_ptr = dma_alloc_coherent(NULL, DMABUFSIZE, &dma_handle, GFP_KERNEL);
     if (!alloc_ptr) {
         pr_warning("dma_alloc_coherent failed\n");
@@ -377,10 +381,6 @@ static int mymiscdev_probe(struct platform_device *pdev)
     if (rc!=0) {
         pr_warning("misc_register failed %d\n", rc);
         dma_free_coherent(NULL, DMABUFSIZE, alloc_ptr, dma_handle);
-    }
-
-    if (dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32))) {
-        pr_warning("mymiscdev: No suitable DMA available\n");
     }
 
     if (gpioButton >= 0)
