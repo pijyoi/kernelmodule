@@ -19,6 +19,7 @@
 #include <linux/sched.h>
 #include <linux/atomic.h>
 #include <linux/kfifo.h>
+#include <linux/platform_device.h>
 
 #include "mymiscdev_ioctl.h"
 
@@ -32,6 +33,12 @@ static unsigned int device_poll(struct file *, poll_table *wait);
 
 static int user_scatter_gather(struct file *filp, char __user *userbuf, size_t nbytes);
 
+struct mymiscdev_data
+{
+};
+
+static struct mymiscdev_data mymiscdev_data;
+
 static struct file_operations sample_fops = {
     .owner = THIS_MODULE,
     .read = device_read,
@@ -44,7 +51,7 @@ static struct file_operations sample_fops = {
     .poll = device_poll,
 };
 
-struct miscdevice sample_device = {
+struct miscdevice sample_misc = {
     .minor = MISC_DYNAMIC_MINOR,
     .name = "mymiscdev",
     .fops = &sample_fops,
@@ -358,7 +365,7 @@ setup_gpio(struct device *dev)
     }
 }
 
-static int __init device_init(void)
+static int mymiscdev_probe(struct platform_device *pdev)
 {
     int rc;
 
@@ -372,29 +379,65 @@ static int __init device_init(void)
 
     pr_debug("dma_handle: %#llx\n", (unsigned long long)dma_handle);
 
-    rc = misc_register(&sample_device);
+    rc = misc_register(&sample_misc);
     if (rc!=0) {
         pr_warning("misc_register failed %d\n", rc);
         dma_free_coherent(NULL, DMABUFSIZE, alloc_ptr, dma_handle);
     }
 
-    if (dma_set_mask_and_coherent(sample_device.this_device, DMA_BIT_MASK(32))) {
+    if (dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32))) {
         pr_warning("mymiscdev: No suitable DMA available\n");
     }
 
     if (gpioButton >= 0)
-        setup_gpio(sample_device.this_device);
+        setup_gpio(&pdev->dev);
 
     return rc;
 }
 
-static void __exit device_exit(void)
+static int mymiscdev_remove(struct platform_device *pdev)
 {
     pr_debug("%s\n", __func__);
 
-    misc_deregister(&sample_device);
+    misc_deregister(&sample_misc);
 
     dma_free_coherent(NULL, DMABUFSIZE, alloc_ptr, dma_handle);
+
+    return 0;
+}
+
+static struct platform_driver mymiscdev_driver = {
+    .probe      = mymiscdev_probe,
+    .remove     = mymiscdev_remove,
+    .driver     = {
+        .name   = "mymiscdev",
+    },
+};
+
+static struct platform_device mymiscdev_device = {
+    .name = "mymiscdev",
+    .id = 0,
+    .dev = {
+        .platform_data = &mymiscdev_data,
+    },
+};
+
+static int __init device_init(void)
+{
+    int err = platform_driver_register(&mymiscdev_driver);
+    if (err==0) {
+        err = platform_device_register(&mymiscdev_device);
+        if (err) {
+            platform_driver_unregister(&mymiscdev_driver);
+        }
+    }
+    return err;
+}
+
+static void __exit device_exit(void)
+{
+    platform_device_unregister(&mymiscdev_device);
+    platform_driver_unregister(&mymiscdev_driver);
 }
 
 module_init(device_init)
