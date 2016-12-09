@@ -33,12 +33,6 @@ static unsigned int device_poll(struct file *, poll_table *wait);
 
 static int user_scatter_gather(struct file *filp, char __user *userbuf, size_t nbytes);
 
-struct mymiscdev_data
-{
-};
-
-static struct mymiscdev_data mymiscdev_data;
-
 static struct file_operations sample_fops = {
     .owner = THIS_MODULE,
     .read = device_read,
@@ -414,29 +408,28 @@ static struct platform_driver mymiscdev_driver = {
     },
 };
 
-static struct platform_device mymiscdev_device = {
-    .name = "mymiscdev",
-    .id = 0,
-    .dev = {
-        .platform_data = &mymiscdev_data,
-    },
-};
+static struct platform_device *platform_device;
 
 static int __init device_init(void)
 {
-    int err = platform_driver_register(&mymiscdev_driver);
-    if (err==0) {
-        err = platform_device_register(&mymiscdev_device);
-        if (err) {
-            platform_driver_unregister(&mymiscdev_driver);
-        }
+    int err;
+
+    err = platform_driver_register(&mymiscdev_driver);
+    if (err)
+        return err;
+
+    platform_device = platform_device_register_simple("mymiscdev", -1, NULL, 0);
+    if (IS_ERR(platform_device)) {
+        err = PTR_ERR(platform_device);
+        platform_driver_unregister(&mymiscdev_driver);
     }
+
     return err;
 }
 
 static void __exit device_exit(void)
 {
-    platform_device_unregister(&mymiscdev_device);
+    platform_device_unregister(platform_device);
     platform_driver_unregister(&mymiscdev_driver);
 }
 
