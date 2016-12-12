@@ -293,6 +293,9 @@ device_write(struct file *filp, const char __user *userbuf, size_t nbytes, loff_
 static int
 device_mmap(struct file *filp, struct vm_area_struct *vma)
 {
+    struct miscdevice *miscdev = filp->private_data;    // filled in by misc_register
+    struct device *dev = miscdev->parent;
+
     int rc;
     if (vma->vm_pgoff == 0)
     {
@@ -301,7 +304,7 @@ device_mmap(struct file *filp, struct vm_area_struct *vma)
             return -EIO;
         }
         #if 1
-        rc = dma_mmap_coherent(NULL, vma, alloc_ptr, dma_handle, length);
+        rc = dma_mmap_coherent(dev, vma, alloc_ptr, dma_handle, length);
         if (rc!=0) {
             pr_warning("dma_mmap_coherent failed %d\n", rc);
         }
