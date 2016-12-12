@@ -377,23 +377,22 @@ static int mymiscdev_probe(struct pci_dev *pdev,
         pr_warning("mymiscdev: No suitable DMA available\n");
     }
 
-    alloc_ptr = dma_alloc_coherent(&pdev->dev, DMABUFSIZE, &dma_handle, GFP_KERNEL);
+    alloc_ptr = dmam_alloc_coherent(&pdev->dev, DMABUFSIZE, &dma_handle, GFP_KERNEL);
     if (!alloc_ptr) {
-        pr_warning("dma_alloc_coherent failed\n");
+        pr_warning("dmam_alloc_coherent failed\n");
         return -ENOMEM;
     }
 
     pr_debug("dma_handle: %#llx\n", (unsigned long long)dma_handle);
 
+    if (gpioButton >= 0)
+        setup_gpio(&pdev->dev);
+
     sample_misc.parent = &pdev->dev;
     rc = misc_register(&sample_misc);
     if (rc!=0) {
         pr_warning("misc_register failed %d\n", rc);
-        dma_free_coherent(&pdev->dev, DMABUFSIZE, alloc_ptr, dma_handle);
     }
-
-    if (gpioButton >= 0)
-        setup_gpio(&pdev->dev);
 
     return rc;
 }
@@ -403,8 +402,6 @@ static void mymiscdev_remove(struct pci_dev *pdev)
     pr_debug("%s\n", __func__);
 
     misc_deregister(&sample_misc);
-
-    dma_free_coherent(&pdev->dev, DMABUFSIZE, alloc_ptr, dma_handle);
 }
 
 static struct pci_driver mymiscdev_driver = {
