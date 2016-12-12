@@ -1,0 +1,5 @@
+Find an unused PCI device on your system and bind the sample driver to it.
+
+echo -n "0000:04:02.0" > /sys/bus/pci/drivers/firewire_ohci/unbind
+echo -n "1106 3044" > /sys/bus/pci/drivers/mymiscdev/new_id
+
