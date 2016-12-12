@@ -19,7 +19,7 @@
 #include <linux/sched.h>
 #include <linux/atomic.h>
 #include <linux/kfifo.h>
-#include <linux/platform_device.h>
+#include <linux/pci.h>
 
 #include "mymiscdev_ioctl.h"
 
@@ -155,6 +155,7 @@ static int user_scatter_gather(struct file *filp, char __user *userbuf, size_t n
     struct scatterlist *sglist = NULL;
     int sg_count;
     struct miscdevice *miscdev = filp->private_data;    // filled in by misc_register
+    struct device *dev = miscdev->parent;
 
     if (nbytes==0) {
         return 0;
@@ -214,7 +215,7 @@ static int user_scatter_gather(struct file *filp, char __user *userbuf, size_t n
         }
     }
 
-    sg_count = dma_map_sg(miscdev->this_device, sglist, num_pages, DMA_FROM_DEVICE);
+    sg_count = dma_map_sg(dev, sglist, num_pages, DMA_FROM_DEVICE);
     if (sg_count==0) {
         pr_warning("dma_map_sg returned 0\n");
         errcode = -EAGAIN;
@@ -235,7 +236,7 @@ static int user_scatter_gather(struct file *filp, char __user *userbuf, size_t n
     }
 
 // cleanup_sglist:
-    dma_unmap_sg(miscdev->this_device, sglist, num_pages, DMA_FROM_DEVICE);
+    dma_unmap_sg(dev, sglist, num_pages, DMA_FROM_DEVICE);
 
 cleanup_pages:
     for (page_idx=0; page_idx < actual_pages; page_idx++) {
@@ -359,17 +360,24 @@ setup_gpio(struct device *dev)
     }
 }
 
-static int mymiscdev_probe(struct platform_device *pdev)
+static int mymiscdev_probe(struct pci_dev *pdev,
+                        const struct pci_device_id *ent)
 {
     int rc;
 
     pr_debug("%s\n", __func__);
 
+    rc = pci_enable_device(pdev);
+    if (rc!=0) {
+        dev_err(&pdev->dev, "failed to enable device\n");
+        return rc;
+    }
+
     if (dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32))) {
         pr_warning("mymiscdev: No suitable DMA available\n");
     }
 
-    alloc_ptr = dma_alloc_coherent(NULL, DMABUFSIZE, &dma_handle, GFP_KERNEL);
+    alloc_ptr = dma_alloc_coherent(&pdev->dev, DMABUFSIZE, &dma_handle, GFP_KERNEL);
     if (!alloc_ptr) {
         pr_warning("dma_alloc_coherent failed\n");
         return -ENOMEM;
@@ -377,10 +385,11 @@ static int mymiscdev_probe(struct platform_device *pdev)
 
     pr_debug("dma_handle: %#llx\n", (unsigned long long)dma_handle);
 
+    sample_misc.parent = &pdev->dev;
     rc = misc_register(&sample_misc);
     if (rc!=0) {
         pr_warning("misc_register failed %d\n", rc);
-        dma_free_coherent(NULL, DMABUFSIZE, alloc_ptr, dma_handle);
+        dma_free_coherent(&pdev->dev, DMABUFSIZE, alloc_ptr, dma_handle);
     }
 
     if (gpioButton >= 0)
@@ -389,52 +398,23 @@ static int mymiscdev_probe(struct platform_device *pdev)
     return rc;
 }
 
-static int mymiscdev_remove(struct platform_device *pdev)
+static void mymiscdev_remove(struct pci_dev *pdev)
 {
     pr_debug("%s\n", __func__);
 
     misc_deregister(&sample_misc);
 
-    dma_free_coherent(NULL, DMABUFSIZE, alloc_ptr, dma_handle);
-
-    return 0;
+    dma_free_coherent(&pdev->dev, DMABUFSIZE, alloc_ptr, dma_handle);
 }
 
-static struct platform_driver mymiscdev_driver = {
+static struct pci_driver mymiscdev_driver = {
+    .name       = "mymiscdev",
+    .id_table   = NULL,
     .probe      = mymiscdev_probe,
     .remove     = mymiscdev_remove,
-    .driver     = {
-        .name   = "mymiscdev",
-    },
 };
 
-static struct platform_device *platform_device;
-
-static int __init device_init(void)
-{
-    int err;
-
-    err = platform_driver_register(&mymiscdev_driver);
-    if (err)
-        return err;
-
-    platform_device = platform_device_register_simple("mymiscdev", -1, NULL, 0);
-    if (IS_ERR(platform_device)) {
-        err = PTR_ERR(platform_device);
-        platform_driver_unregister(&mymiscdev_driver);
-    }
-
-    return err;
-}
-
-static void __exit device_exit(void)
-{
-    platform_device_unregister(platform_device);
-    platform_driver_unregister(&mymiscdev_driver);
-}
-
-module_init(device_init)
-module_exit(device_exit)
+module_pci_driver(mymiscdev_driver);
 
 MODULE_DESCRIPTION("Simple Misc Driver");
 MODULE_AUTHOR("Kiu Shueng Chuan");
