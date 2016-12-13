@@ -155,6 +155,7 @@ static int user_scatter_gather(struct file *filp, char __user *userbuf, size_t n
     struct scatterlist *sglist = NULL;
     int sg_count;
     struct miscdevice *miscdev = filp->private_data;    // filled in by misc_register
+    struct device *dev = miscdev->parent;
 
     if (nbytes==0) {
         return 0;
@@ -214,7 +215,7 @@ static int user_scatter_gather(struct file *filp, char __user *userbuf, size_t n
         }
     }
 
-    sg_count = dma_map_sg(miscdev->this_device, sglist, num_pages, DMA_FROM_DEVICE);
+    sg_count = dma_map_sg(dev, sglist, num_pages, DMA_FROM_DEVICE);
     if (sg_count==0) {
         pr_warning("dma_map_sg returned 0\n");
         errcode = -EAGAIN;
@@ -235,7 +236,7 @@ static int user_scatter_gather(struct file *filp, char __user *userbuf, size_t n
     }
 
 // cleanup_sglist:
-    dma_unmap_sg(miscdev->this_device, sglist, num_pages, DMA_FROM_DEVICE);
+    dma_unmap_sg(dev, sglist, num_pages, DMA_FROM_DEVICE);
 
 cleanup_pages:
     for (page_idx=0; page_idx < actual_pages; page_idx++) {
@@ -292,6 +293,9 @@ device_write(struct file *filp, const char __user *userbuf, size_t nbytes, loff_
 static int
 device_mmap(struct file *filp, struct vm_area_struct *vma)
 {
+    struct miscdevice *miscdev = filp->private_data;    // filled in by misc_register
+    struct device *dev = miscdev->parent;
+
     int rc;
     if (vma->vm_pgoff == 0)
     {
@@ -300,7 +304,7 @@ device_mmap(struct file *filp, struct vm_area_struct *vma)
             return -EIO;
         }
         #if 1
-        rc = dma_mmap_coherent(NULL, vma, alloc_ptr, dma_handle, length);
+        rc = dma_mmap_coherent(dev, vma, alloc_ptr, dma_handle, length);
         if (rc!=0) {
             pr_warning("dma_mmap_coherent failed %d\n", rc);
         }
@@ -369,22 +373,22 @@ static int mymiscdev_probe(struct platform_device *pdev)
         pr_warning("mymiscdev: No suitable DMA available\n");
     }
 
-    alloc_ptr = dma_alloc_coherent(NULL, DMABUFSIZE, &dma_handle, GFP_KERNEL);
+    alloc_ptr = dmam_alloc_coherent(&pdev->dev, DMABUFSIZE, &dma_handle, GFP_KERNEL);
     if (!alloc_ptr) {
-        pr_warning("dma_alloc_coherent failed\n");
+        pr_warning("dmam_alloc_coherent failed\n");
         return -ENOMEM;
     }
 
     pr_debug("dma_handle: %#llx\n", (unsigned long long)dma_handle);
 
+    if (gpioButton >= 0)
+        setup_gpio(&pdev->dev);
+
+    sample_misc.parent = &pdev->dev;
     rc = misc_register(&sample_misc);
     if (rc!=0) {
         pr_warning("misc_register failed %d\n", rc);
-        dma_free_coherent(NULL, DMABUFSIZE, alloc_ptr, dma_handle);
     }
-
-    if (gpioButton >= 0)
-        setup_gpio(&pdev->dev);
 
     return rc;
 }
@@ -394,8 +398,6 @@ static int mymiscdev_remove(struct platform_device *pdev)
     pr_debug("%s\n", __func__);
 
     misc_deregister(&sample_misc);
-
-    dma_free_coherent(NULL, DMABUFSIZE, alloc_ptr, dma_handle);
 
     return 0;
 }
@@ -413,12 +415,21 @@ static struct platform_device *platform_device;
 static int __init device_init(void)
 {
     int err;
+    struct platform_device_info pdevinfo = {
+        .name       = "mymiscdev",
+        .id         = -1,
+        .res        = NULL,
+        .num_res    = 0,
+        .dma_mask   = DMA_BIT_MASK(32),
+    };
 
     err = platform_driver_register(&mymiscdev_driver);
     if (err)
         return err;
 
-    platform_device = platform_device_register_simple("mymiscdev", -1, NULL, 0);
+    // platform_device = platform_device_register_simple("mymiscdev", -1, NULL, 0);
+    platform_device = platform_device_register_full(&pdevinfo);
+
     if (IS_ERR(platform_device)) {
         err = PTR_ERR(platform_device);
         platform_driver_unregister(&mymiscdev_driver);
