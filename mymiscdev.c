@@ -52,9 +52,16 @@ struct miscdevice sample_misc = {
     .mode = S_IRUGO | S_IWUGO,
 };
 
-#define DMABUFSIZE 1048576
-static void *alloc_ptr;
-static dma_addr_t dma_handle;
+#define DMABUFSIZE_ORDER 20
+#define DMABUFSIZE (1 << DMABUFSIZE_ORDER)
+
+struct DmaAddress
+{
+    void *virtual;
+    dma_addr_t dma_handle;
+};
+
+static struct DmaAddress da_coherent;
 
 static DECLARE_WAIT_QUEUE_HEAD(device_read_wait);
 static atomic_t hardirq_cnt = ATOMIC_INIT(0);
@@ -295,6 +302,7 @@ device_mmap(struct file *filp, struct vm_area_struct *vma)
 {
     struct miscdevice *miscdev = filp->private_data;    // filled in by misc_register
     struct device *dev = miscdev->parent;
+    struct DmaAddress *da = &da_coherent;
 
     int rc;
     if (vma->vm_pgoff == 0)
@@ -304,14 +312,14 @@ device_mmap(struct file *filp, struct vm_area_struct *vma)
             return -EIO;
         }
         #if 1
-        rc = dma_mmap_coherent(dev, vma, alloc_ptr, dma_handle, length);
+        rc = dma_mmap_coherent(dev, vma, da->virtual, da->dma_handle, length);
         if (rc!=0) {
             pr_warning("dma_mmap_coherent failed %d\n", rc);
         }
         #else
         // vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
         rc = remap_pfn_range(vma, vma->vm_start,
-                             PHYS_PFN(virt_to_phys(alloc_ptr)),
+                             PHYS_PFN(virt_to_phys(da->virtual)),
                              length, vma->vm_page_prot);
         if (rc!=0) {
             pr_warning("remap_pfn_range failed %d\n", rc);
@@ -366,6 +374,7 @@ setup_gpio(struct device *dev)
 static int mymiscdev_probe(struct platform_device *pdev)
 {
     int rc;
+    struct DmaAddress *da;
 
     pr_debug("%s\n", __func__);
 
@@ -373,13 +382,14 @@ static int mymiscdev_probe(struct platform_device *pdev)
         pr_warning("mymiscdev: No suitable DMA available\n");
     }
 
-    alloc_ptr = dmam_alloc_coherent(&pdev->dev, DMABUFSIZE, &dma_handle, GFP_KERNEL);
-    if (!alloc_ptr) {
+    da = &da_coherent;
+    da->virtual = dmam_alloc_coherent(&pdev->dev, DMABUFSIZE, da->dma_handle, GFP_KERNEL);
+    if (!da->virtual) {
         pr_warning("dmam_alloc_coherent failed\n");
         return -ENOMEM;
     }
 
-    pr_debug("dma_handle: %#llx\n", (unsigned long long)dma_handle);
+    pr_debug("dma_handle: %#llx\n", (unsigned long long)da->dma_handle);
 
     if (gpioButton >= 0)
         setup_gpio(&pdev->dev);
