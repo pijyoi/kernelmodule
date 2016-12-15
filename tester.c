@@ -27,9 +27,11 @@ int main()
     size_t bufsize = 32768;
     int rc;
 
-    // pass offset==0 for driver allocated memory
-    // or offset!=0 for a kernel cmdline reserved memory region
-    void *mapptr = mmap(NULL, bufsize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    long page_size = sysconf(_SC_PAGESIZE);
+
+    // pass offset==1*page_size for driver allocated consistent dma mapping
+    // pass offset==2*page_size for driver allocated streaming dma mapping
+    void *mapptr = mmap(NULL, bufsize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 1*page_size);
     if (mapptr==MAP_FAILED) {
         perror("mmap");
         return -1;
