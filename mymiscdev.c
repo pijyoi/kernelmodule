@@ -306,20 +306,31 @@ device_mmap(struct file *filp, struct vm_area_struct *vma)
     struct device *dev = miscdev->parent;
 
     int rc;
-    if (vma->vm_pgoff == 1)
+    long length = vma->vm_end - vma->vm_start;
+
+    pr_debug("vma: %#lx %#lx %ld\n", vma->vm_start, vma->vm_end, vma->vm_pgoff);
+
+    if (length > DMABUFSIZE) {
+        return -EIO;
+    }
+
+    if (vma->vm_pgoff == 0)
     {
+        // for some reason, dma_mmap_coherent will fail for vm_pgoff != 0.
+        // dma_mmap_coherent makes use of vm_pgoff to calculate the offset of
+        // cpu_addr when calling remap_pfn_range, so passing in non-zero vm_pgoff
+        // isn't what we want anyway.
         struct DmaAddress *da = &da_coherent;
 
-        long length = vma->vm_end - vma->vm_start;
-        if (length > DMABUFSIZE) {
-            return -EIO;
-        }
-        #if 1
         rc = dma_mmap_coherent(dev, vma, da->virtual, da->dma_handle, length);
         if (rc!=0) {
             pr_warning("dma_mmap_coherent failed %d\n", rc);
         }
-        #else
+    }
+    else if (vma->vm_pgoff == 1)
+    {
+        struct DmaAddress *da = &da_coherent;
+
         // vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
         rc = remap_pfn_range(vma, vma->vm_start,
                              PHYS_PFN(virt_to_phys(da->virtual)),
@@ -327,16 +338,11 @@ device_mmap(struct file *filp, struct vm_area_struct *vma)
         if (rc!=0) {
             pr_warning("remap_pfn_range failed %d\n", rc);
         }
-        #endif
     }
     else if (vma->vm_pgoff == 2)
     {
         struct DmaAddress *da = &da_single;
 
-        long length = vma->vm_end - vma->vm_start;
-        if (length > DMABUFSIZE) {
-            return -EIO;
-        }
         rc = remap_pfn_range(vma, vma->vm_start,
                              PHYS_PFN(virt_to_phys(da->virtual)),
                              length, vma->vm_page_prot);
