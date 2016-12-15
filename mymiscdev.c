@@ -52,8 +52,8 @@ struct miscdevice sample_misc = {
     .mode = S_IRUGO | S_IWUGO,
 };
 
-#define DMABUFSIZE_ORDER 20
-#define DMABUFSIZE (1 << DMABUFSIZE_ORDER)
+#define DMABUFSIZE_ORDER 8
+#define DMABUFSIZE ((1 << DMABUFSIZE_ORDER)*PAGE_SIZE)
 
 struct DmaAddress
 {
@@ -62,6 +62,7 @@ struct DmaAddress
 };
 
 static struct DmaAddress da_coherent;
+static struct DmaAddress da_single;
 
 static DECLARE_WAIT_QUEUE_HEAD(device_read_wait);
 static atomic_t hardirq_cnt = ATOMIC_INIT(0);
@@ -388,7 +389,20 @@ static int mymiscdev_probe(struct platform_device *pdev)
         pr_warning("dmam_alloc_coherent failed\n");
         return -ENOMEM;
     }
+    pr_debug("dma_handle: %#llx\n", (unsigned long long)da->dma_handle);
 
+    da = &da_single;
+    da->virtual = (void*)devm_get_free_pages(&pdev->dev,
+                            GFP_KERNEL | GFP_DMA, DMABUFSIZE_ORDER);
+    if (!da->virtual) {
+        pr_warning("devm_get_free_pages failed\n");
+        return -ENOMEM;
+    }
+    da->dma_handle = dma_map_single(&pdev->dev, da->virtual, DMABUFSIZE, DMA_FROM_DEVICE);
+    if (dma_mapping_error(&pdev->dev, da->dma_handle)) {
+        pr_warning("dma_map_single failed\n");
+        return -EBUSY;
+    }
     pr_debug("dma_handle: %#llx\n", (unsigned long long)da->dma_handle);
 
     if (gpioButton >= 0)
@@ -398,6 +412,8 @@ static int mymiscdev_probe(struct platform_device *pdev)
     rc = misc_register(&sample_misc);
     if (rc!=0) {
         pr_warning("misc_register failed %d\n", rc);
+
+        dma_unmap_single(&pdev->dev, da_single.dma_handle, DMABUFSIZE, DMA_FROM_DEVICE);
     }
 
     return rc;
@@ -408,6 +424,8 @@ static int mymiscdev_remove(struct platform_device *pdev)
     pr_debug("%s\n", __func__);
 
     misc_deregister(&sample_misc);
+
+    dma_unmap_single(&pdev->dev, da_single.dma_handle, DMABUFSIZE, DMA_FROM_DEVICE);
 
     return 0;
 }
