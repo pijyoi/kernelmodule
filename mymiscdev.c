@@ -31,7 +31,7 @@ static int device_mmap(struct file *, struct vm_area_struct *);
 static long device_ioctl(struct file *, unsigned int cmd, unsigned long arg);
 static unsigned int device_poll(struct file *, poll_table *wait);
 
-static int user_scatter_gather(struct file *filp, char __user *userbuf, size_t nbytes);
+static int user_scatter_gather(struct device *dev, char __user *userbuf, size_t nbytes);
 
 static struct file_operations sample_fops = {
     .owner = THIS_MODULE,
@@ -130,6 +130,9 @@ device_release(struct inode *inodep, struct file *filp)
 static long
 device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
+    struct miscdevice *miscdev = filp->private_data;    // filled in by misc_register
+    struct device *dev = miscdev->parent;
+
     int retcode = -ENOTTY;
 
     pr_debug("%s\n", __func__);
@@ -144,7 +147,7 @@ device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         }
         // struct mymiscdev_ioctl *param = (struct mymiscdev_ioctl*)arg;
         pr_debug("ioctl_cmd_1 %p %zu\n", param.buffer, param.len);
-        retcode = user_scatter_gather(filp, param.buffer, param.len);
+        retcode = user_scatter_gather(dev, param.buffer, param.len);
         break;
     }
     }
@@ -152,7 +155,7 @@ device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     return retcode;
 }
 
-static int user_scatter_gather(struct file *filp, char __user *userbuf, size_t nbytes)
+static int user_scatter_gather(struct device *dev, char __user *userbuf, size_t nbytes)
 {
     int errcode = 0;
     int num_pages;
@@ -162,8 +165,6 @@ static int user_scatter_gather(struct file *filp, char __user *userbuf, size_t n
     int offset;
     struct scatterlist *sglist = NULL;
     int sg_count;
-    struct miscdevice *miscdev = filp->private_data;    // filled in by misc_register
-    struct device *dev = miscdev->parent;
 
     if (nbytes==0) {
         return 0;
