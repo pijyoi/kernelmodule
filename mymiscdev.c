@@ -383,7 +383,7 @@ static int mymiscdev_probe(struct platform_device *pdev)
     }
 
     da = &da_coherent;
-    da->virtual = dmam_alloc_coherent(&pdev->dev, DMABUFSIZE, da->dma_handle, GFP_KERNEL);
+    da->virtual = dmam_alloc_coherent(&pdev->dev, DMABUFSIZE, &da->dma_handle, GFP_KERNEL);
     if (!da->virtual) {
         pr_warning("dmam_alloc_coherent failed\n");
         return -ENOMEM;
