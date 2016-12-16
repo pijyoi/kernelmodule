@@ -216,7 +216,8 @@ static int user_scatter_gather(struct device *dev, char __user *userbuf, size_t 
 
         for_each_sg(sgtbl.sgl, sg, sgtbl.nents, sg_idx) {
             struct page *page = (struct page *)(sg->page_link & ~3UL);
-            pr_debug("%d: %#08llx %u\n", sg_idx, page_to_phys(page) + sg->offset, sg->length);
+            unsigned long paddr = page_to_phys(page);
+            pr_debug("%d: %#08lx %u\n", sg_idx, paddr + sg->offset, sg->length);
         }
     }
 
@@ -328,7 +329,7 @@ device_mmap(struct file *filp, struct vm_area_struct *vma)
 
         // vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
         rc = remap_pfn_range(vma, vma->vm_start,
-                             PHYS_PFN(virt_to_phys(da->virtual)),
+                             virt_to_phys(da->virtual) >> PAGE_SHIFT,
                              length, vma->vm_page_prot);
         if (rc!=0) {
             pr_warning("remap_pfn_range failed %d\n", rc);
@@ -339,7 +340,7 @@ device_mmap(struct file *filp, struct vm_area_struct *vma)
         struct DmaAddress *da = &da_single;
 
         rc = remap_pfn_range(vma, vma->vm_start,
-                             PHYS_PFN(virt_to_phys(da->virtual)),
+                             virt_to_phys(da->virtual) >> PAGE_SHIFT,
                              length, vma->vm_page_prot);
         if (rc!=0) {
             pr_warning("remap_pfn_range failed %d\n", rc);
