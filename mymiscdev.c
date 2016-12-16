@@ -163,7 +163,7 @@ static int user_scatter_gather(struct device *dev, char __user *userbuf, size_t 
     struct page **pages = NULL;
     int page_idx;
     int offset;
-    struct scatterlist *sglist = NULL;
+    struct sg_table sgtbl;
     int sg_count;
 
     if (nbytes==0) {
@@ -182,10 +182,8 @@ static int user_scatter_gather(struct device *dev, char __user *userbuf, size_t 
     num_pages = (offset + nbytes + PAGE_SIZE - 1) / PAGE_SIZE;
 
     pages = kmalloc(num_pages * sizeof(*pages), GFP_KERNEL);
-    sglist = kmalloc(num_pages * sizeof(*sglist), GFP_KERNEL);
-    if (!pages || !sglist) {    // okay if allocation for vmas failed
-        errcode = -ENOMEM;
-        goto cleanup_alloc;
+    if (!pages) {    // okay if allocation for vmas failed
+        return -ENOMEM;
     }
 
     // get_user_pages also locks the user-space buffer into memory
@@ -206,29 +204,17 @@ static int user_scatter_gather(struct device *dev, char __user *userbuf, size_t 
 
     pr_debug("get_user_pages returned %d\n", actual_pages);
 
-    // populate sglist
-    sg_init_table(sglist, num_pages);
-    sg_set_page(&sglist[0], pages[0], PAGE_SIZE - offset, offset);
-    for (page_idx=1; page_idx < num_pages-1; page_idx++) {
-        sg_set_page(&sglist[page_idx], pages[page_idx], PAGE_SIZE, 0);
-    }
-    if (num_pages > 1) {
-        sg_set_page(&sglist[num_pages-1], pages[num_pages-1],
-            nbytes - (PAGE_SIZE - offset) - ((num_pages-2)*PAGE_SIZE), 0);
+    errcode = sg_alloc_table_from_pages(&sgtbl, pages, num_pages, offset, nbytes, GFP_KERNEL);
+    if (errcode) {
+        pr_warning("sg_alloc_table_from_pages returned %d\n", errcode);
+        goto cleanup_pages;
     }
 
-    if (1) {
-        for (page_idx=0; page_idx < num_pages; page_idx++) {
-            struct scatterlist *sg = &sglist[page_idx];
-            pr_debug("%d: %p %u\n", page_idx, pages[page_idx], sg->length);
-        }
-    }
-
-    sg_count = dma_map_sg(dev, sglist, num_pages, DMA_FROM_DEVICE);
+    sg_count = dma_map_sg(dev, sgtbl.sgl, sgtbl.nents, DMA_FROM_DEVICE);
     if (sg_count==0) {
         pr_warning("dma_map_sg returned 0\n");
         errcode = -EAGAIN;
-        goto cleanup_pages;
+        goto cleanup_sgtbl;
     }
 
     pr_debug("dma_map_sg returned %d\n", sg_count);
@@ -237,7 +223,7 @@ static int user_scatter_gather(struct device *dev, char __user *userbuf, size_t 
         struct scatterlist *sg;
         int sg_idx;
 
-        for_each_sg(sglist, sg, sg_count, sg_idx) {
+        for_each_sg(sgtbl.sgl, sg, sg_count, sg_idx) {
             unsigned long hwaddr = sg_dma_address(sg);
             unsigned int dmalen = sg_dma_len(sg);
             pr_debug("%d: %#08lx %u\n", sg_idx, hwaddr, dmalen);
@@ -245,17 +231,16 @@ static int user_scatter_gather(struct device *dev, char __user *userbuf, size_t 
     }
 
 // cleanup_sglist:
-    dma_unmap_sg(dev, sglist, num_pages, DMA_FROM_DEVICE);
+    dma_unmap_sg(dev, sgtbl.sgl, sgtbl.nents, DMA_FROM_DEVICE);
+
+cleanup_sgtbl:
+    sg_free_table(&sgtbl);
 
 cleanup_pages:
     for (page_idx=0; page_idx < actual_pages; page_idx++) {
         // alias page_cache_release has been removed
         put_page(pages[page_idx]);
     }
-
-cleanup_alloc:
-    kfree(sglist);
-    kfree(pages);
 
     return errcode;
 }
