@@ -210,6 +210,16 @@ static int user_scatter_gather(struct device *dev, char __user *userbuf, size_t 
         goto cleanup_pages;
     }
 
+    {
+        struct scatterlist *sg;
+        int sg_idx;
+
+        for_each_sg(sgtbl.sgl, sg, sgtbl.nents, sg_idx) {
+            struct page *page = (struct page *)(sg->page_link & ~3UL);
+            pr_debug("%d: %#08llx %u\n", sg_idx, page_to_phys(page) + sg->offset, sg->length);
+        }
+    }
+
     sg_count = dma_map_sg(dev, sgtbl.sgl, sgtbl.nents, DMA_FROM_DEVICE);
     if (sg_count==0) {
         pr_warning("dma_map_sg returned 0\n");
