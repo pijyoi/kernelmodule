@@ -192,7 +192,14 @@ static int user_scatter_gather(struct device *dev, char __user *userbuf, size_t 
         #if LINUX_VERSION_CODE < KERNEL_VERSION(4,6,1)
         current, current->mm,
         #endif
-        (unsigned long)userbuf, num_pages, 1, 0, pages, NULL);
+        #if LINUX_VERSION_CODE < KERNEL_VERSION(4,9,0)
+        (unsigned long)userbuf, num_pages,
+        1, /* write access for out data */
+        0, /* no force */
+        pages, NULL);
+        #else
+        (unsigned long)userbuf, num_pages, FOLL_WRITE, pages, NULL);
+        #endif
     up_read(&current->mm->mmap_sem);
 
     if (actual_pages != num_pages) {
