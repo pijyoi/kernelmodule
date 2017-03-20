@@ -414,15 +414,16 @@ static int mymiscdev_probe(struct platform_device *pdev)
     pr_debug("dma_handle: %#llx\n", (unsigned long long)da->dma_handle);
 
     da = &da_single;
-    da->virtual = (void*)devm_get_free_pages(&pdev->dev,
-                            GFP_KERNEL | GFP_DMA32, DMABUFSIZE_ORDER);
+    da->virtual = (void*)__get_free_pages(GFP_KERNEL | GFP_DMA32, DMABUFSIZE_ORDER);
     if (!da->virtual) {
-        pr_warning("devm_get_free_pages failed\n");
+        pr_warning("get_free_pages failed\n");
         return -ENOMEM;
     }
     da->dma_handle = dma_map_single(&pdev->dev, da->virtual, DMABUFSIZE, DMA_FROM_DEVICE);
     if (dma_mapping_error(&pdev->dev, da->dma_handle)) {
         pr_warning("dma_map_single failed\n");
+
+        free_pages((unsigned long)da_single.virtual, DMABUFSIZE_ORDER);
         return -EBUSY;
     }
     pr_debug("dma_handle: %#llx\n", (unsigned long long)da->dma_handle);
@@ -436,6 +437,7 @@ static int mymiscdev_probe(struct platform_device *pdev)
         pr_warning("misc_register failed %d\n", rc);
 
         dma_unmap_single(&pdev->dev, da_single.dma_handle, DMABUFSIZE, DMA_FROM_DEVICE);
+        free_pages((unsigned long)da_single.virtual, DMABUFSIZE_ORDER);
     }
 
     return rc;
