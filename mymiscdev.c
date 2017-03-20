@@ -415,7 +415,7 @@ static int mymiscdev_probe(struct platform_device *pdev)
 
     da = &da_single;
     da->virtual = (void*)devm_get_free_pages(&pdev->dev,
-                            GFP_KERNEL | GFP_DMA, DMABUFSIZE_ORDER);
+                            GFP_KERNEL | GFP_DMA32, DMABUFSIZE_ORDER);
     if (!da->virtual) {
         pr_warning("devm_get_free_pages failed\n");
         return -ENOMEM;
