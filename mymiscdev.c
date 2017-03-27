@@ -427,15 +427,24 @@ setup_dma(struct device *dev)
 {
     int rc;
     unsigned int irqnum = 16 + dmaChan;
+    void __iomem *dmaBase;
 
     unsigned long chan_base = 0x20007000 + (dmaChan << 8);
-    struct resource *res = devm_request_mem_region(dev, chan_base, 36, "mymiscdev");
+    struct resource *res = devm_request_mem_region(dev, chan_base, 0x100, "mymiscdev");
     if (!res) {
         dev_warn(dev, "request_mem_region failed\n");
-        return;
+        // return;
     }
 
-    devm_ioremap_resource(dev, res);
+    // devm_ioremap_resource(dev, res);
+    dmaBase = devm_ioremap(dev, chan_base, 0x100);
+    if (IS_ERR(dmaBase)) {
+        int err = PTR_ERR(dmaBase);
+        dev_warn(dev, "ioremap failed %d\n", err);
+    }
+    else {
+        pr_debug("dmaBase: %#lx\n", (unsigned long)dmaBase);
+    }
 
     rc = devm_request_irq(dev, irqnum, dma_irq_handler, IRQF_TRIGGER_RISING,
         "mymiscdev", NULL);
