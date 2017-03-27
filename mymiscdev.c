@@ -70,6 +70,9 @@ static atomic_t hardirq_cnt = ATOMIC_INIT(0);
 static int gpioButton = -1;    // specific to your setup
 module_param(gpioButton, int, 0);
 
+static int dmaChan = 10;
+module_param(dmaChan, int, 0);
+
 DEFINE_KFIFO(fifo_timeval, struct timeval, 32);
 DEFINE_KFIFO(fifo_timestamp, char, 4096);
 
@@ -104,6 +107,31 @@ static irqreturn_t
 gpio_irq_handler(int irq, void *dev_id)
 {
     struct timeval tv;
+    do_gettimeofday(&tv);
+
+    kfifo_in(&fifo_timeval, &tv, 1);
+    atomic_inc(&hardirq_cnt);
+    tasklet_schedule(&gpio_tasklet);
+    return IRQ_HANDLED;
+}
+
+static irqreturn_t
+dma_irq_handler(int irq, void *dev_id)
+{
+    struct timeval tv;
+
+    #if 0
+    void __iomem *chan_base;
+    unsigned long cs;
+
+    chan_base = (void*)(0x20007000 + (dmaChan << 8));
+    cs = readl(chan_base + 0);
+
+    if (!(cs & 4))
+        return IRQ_NONE;
+    writel(4, chan_base + 0);
+    #endif
+
     do_gettimeofday(&tv);
 
     kfifo_in(&fifo_timeval, &tv, 1);
@@ -394,6 +422,29 @@ setup_gpio(struct device *dev)
     }
 }
 
+static void
+setup_dma(struct device *dev)
+{
+    int rc;
+    unsigned int irqnum = 16 + dmaChan;
+
+    unsigned long chan_base = 0x20007000 + (dmaChan << 8);
+    struct resource *res = devm_request_mem_region(dev, chan_base, 36, "mymiscdev");
+    if (!res) {
+        dev_warn(dev, "request_mem_region failed\n");
+        return;
+    }
+
+    devm_ioremap_resource(dev, res);
+
+    rc = devm_request_irq(dev, irqnum, dma_irq_handler, IRQF_TRIGGER_RISING,
+        "mymiscdev", NULL);
+    if (rc!=0) {
+        dev_warn(dev, "request_irq failed %d\n", rc);
+        return;
+    }
+}
+
 static int mymiscdev_probe(struct platform_device *pdev)
 {
     int rc;
@@ -430,6 +481,8 @@ static int mymiscdev_probe(struct platform_device *pdev)
 
     if (gpioButton >= 0)
         setup_gpio(&pdev->dev);
+
+    setup_dma(&pdev->dev);
 
     sample_misc.parent = &pdev->dev;
     rc = misc_register(&sample_misc);
