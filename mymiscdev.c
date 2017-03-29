@@ -63,6 +63,7 @@ struct DmaAddress
 
 static struct DmaAddress da_coherent;
 static struct DmaAddress da_single;
+static void __iomem *dmachan_virt;
 
 static DECLARE_WAIT_QUEUE_HEAD(device_read_wait);
 static atomic_t hardirq_cnt = ATOMIC_INIT(0);
@@ -70,7 +71,7 @@ static atomic_t hardirq_cnt = ATOMIC_INIT(0);
 static int gpioButton = -1;    // specific to your setup
 module_param(gpioButton, int, 0);
 
-static int dmaChan = 10;
+static int dmaChan = -1;
 module_param(dmaChan, int, 0);
 
 DEFINE_KFIFO(fifo_timeval, struct timeval, 32);
@@ -120,17 +121,13 @@ dma_irq_handler(int irq, void *dev_id)
 {
     struct timeval tv;
 
-    #if 0
-    void __iomem *chan_base;
     unsigned long cs;
 
-    chan_base = (void*)(0x20007000 + (dmaChan << 8));
-    cs = readl(chan_base + 0);
+    cs = ioread32(dmachan_virt + 0);
 
     if (!(cs & 4))
         return IRQ_NONE;
-    writel(4, chan_base + 0);
-    #endif
+    iowrite32(4, dmachan_virt + 0);
 
     do_gettimeofday(&tv);
 
@@ -427,23 +424,22 @@ setup_dma(struct device *dev)
 {
     int rc;
     unsigned int irqnum = 16 + dmaChan;
-    void __iomem *dmaBase;
 
-    unsigned long chan_base = 0x20007000 + (dmaChan << 8);
-    struct resource *res = devm_request_mem_region(dev, chan_base, 0x100, "mymiscdev");
+    unsigned long dmachan_phys = 0x20007000 + (dmaChan << 8);
+    struct resource *res = devm_request_mem_region(dev, dmachan_phys, 0x100, "mymiscdev");
     if (!res) {
         dev_warn(dev, "request_mem_region failed\n");
         // return;
     }
 
     // devm_ioremap_resource(dev, res);
-    dmaBase = devm_ioremap(dev, chan_base, 0x100);
-    if (IS_ERR(dmaBase)) {
-        int err = PTR_ERR(dmaBase);
+    dmachan_virt = devm_ioremap(dev, dmachan_phys, 0x100);
+    if (IS_ERR(dmachan_virt)) {
+        int err = PTR_ERR(dmachan_virt);
         dev_warn(dev, "ioremap failed %d\n", err);
     }
     else {
-        pr_debug("dmaBase: %#lx\n", (unsigned long)dmaBase);
+        pr_debug("dmachan_virt: %#lx\n", (unsigned long)dmachan_virt);
     }
 
     rc = devm_request_irq(dev, irqnum, dma_irq_handler, IRQF_TRIGGER_RISING,
@@ -491,7 +487,8 @@ static int mymiscdev_probe(struct platform_device *pdev)
     if (gpioButton >= 0)
         setup_gpio(&pdev->dev);
 
-    setup_dma(&pdev->dev);
+    if (dmaChan >= 0)
+        setup_dma(&pdev->dev);
 
     sample_misc.parent = &pdev->dev;
     rc = misc_register(&sample_misc);
