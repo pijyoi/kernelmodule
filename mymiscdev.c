@@ -457,6 +457,7 @@ setup_dma(struct device *dev)
     unsigned int irqnum = 16 + dmaChan;
     struct DmaAddress *da = &da_ctlblk;
 
+#if 1
     // unsigned long dmachan_phys = 0x20007000 + (dmaChan << 8);
     // unsigned long dmachan_phys = BCM2708_PERI_BASE + 0x7000 + (dmaChan << 8);
     unsigned long dmachan_phys = DMA_BASE + (dmaChan << 8);
@@ -465,17 +466,25 @@ setup_dma(struct device *dev)
         dev_warn(dev, "request_mem_region failed\n");
         // return;
     }
+    pr_debug("dmachan_phys: %#lx\n", dmachan_phys);
 
     // devm_ioremap_resource(dev, res);
     dmachan_virt = devm_ioremap(dev, dmachan_phys, 0x100);
     if (IS_ERR(dmachan_virt)) {
         int err = PTR_ERR(dmachan_virt);
         dev_warn(dev, "ioremap failed %d\n", err);
+        return;
     }
-    else {
-        pr_debug("dmachan_virt: %#lx\n", (unsigned long)dmachan_virt);
-        iowrite32(BCM2708_DMA_RESET, dmachan_virt + BCM2708_DMA_CS);
-    }
+#else
+    irqnum = 0;
+    dmaChan = bcm_dma_chan_alloc(BCM_DMA_FEATURE_LITE, &dmachan_virt, &irqnum);
+    pr_debug("bcm_dma_chan_alloc() returned chan=%d, irq=%d\n", dmaChan, irqnum);
+    if (dmaChan < 0)
+        return;
+#endif
+    pr_debug("dmachan_virt: %#lx\n", (unsigned long)dmachan_virt);
+
+    iowrite32(BCM2708_DMA_RESET, dmachan_virt + BCM2708_DMA_CS);
 
     rc = devm_request_irq(dev, irqnum, dma_irq_handler, IRQF_TRIGGER_RISING,
         "mymiscdev", NULL);
@@ -483,7 +492,6 @@ setup_dma(struct device *dev)
         dev_warn(dev, "request_irq failed %d\n", rc);
         return;
     }
-
     da->virtual = dmam_alloc_coherent(dev, 4096, &da->dma_handle, GFP_KERNEL);
 }
 
@@ -544,6 +552,12 @@ static int mymiscdev_remove(struct platform_device *pdev)
     pr_debug("%s\n", __func__);
 
     misc_deregister(&sample_misc);
+
+    #if 0
+    if (dmaChan >= 0) {
+        bcm_dma_chan_free(dmaChan);
+    }
+    #endif
 
     dma_unmap_single(&pdev->dev, da_single.dma_handle, DMABUFSIZE, DMA_FROM_DEVICE);
 

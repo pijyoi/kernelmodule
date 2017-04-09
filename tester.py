@@ -34,11 +34,16 @@ fcntl.ioctl(fd, op, arg)
 
 print('launch dma')
 mm1[:5] = b"HELLO"
+mm2[:4096] = b'\0'*4096
+
 op = get_iocode(0xA5, 2, 0, '')
 fcntl.ioctl(fd, op)
 
 print('attempting read')
-data = os.read(fd, 32)
+try:
+    data = os.read(fd, 32)
+except KeyboardInterrupt:
+    pass
 
-print(mm2[:128])
+print(mm2[:32])
 
