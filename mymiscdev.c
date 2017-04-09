@@ -22,6 +22,7 @@
 #include <linux/platform_device.h>
 
 #include "mymiscdev_ioctl.h"
+#include "rpi_dma.h"
 
 static int device_open(struct inode *, struct file *);
 static int device_release(struct inode *, struct file *);
@@ -32,6 +33,7 @@ static long device_ioctl(struct file *, unsigned int cmd, unsigned long arg);
 static unsigned int device_poll(struct file *, poll_table *wait);
 
 static int user_scatter_gather(struct device *dev, char __user *userbuf, size_t nbytes);
+static int launch_dma(struct device *dev);
 
 static struct file_operations sample_fops = {
     .owner = THIS_MODULE,
@@ -64,6 +66,7 @@ struct DmaAddress
 static struct DmaAddress da_coherent;
 static struct DmaAddress da_single;
 static void __iomem *dmachan_virt;
+static struct DmaAddress da_ctlblk;
 
 static DECLARE_WAIT_QUEUE_HEAD(device_read_wait);
 static atomic_t hardirq_cnt = ATOMIC_INIT(0);
@@ -127,7 +130,7 @@ dma_irq_handler(int irq, void *dev_id)
 
     if (!(cs & 4))
         return IRQ_NONE;
-    iowrite32(4, dmachan_virt + 0);
+    iowrite32(4, dmachan_virt + 0); // clear interrupt
 
     do_gettimeofday(&tv);
 
@@ -173,6 +176,13 @@ device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         // struct mymiscdev_ioctl *param = (struct mymiscdev_ioctl*)arg;
         pr_debug("ioctl_cmd_1 %p %zu\n", param.buffer, param.len);
         retcode = user_scatter_gather(dev, param.buffer, param.len);
+        break;
+    }
+
+    case SAMPLE_IOCTL_CMD_2:
+    {
+        pr_debug("ioctl_cmd_2\n");
+        retcode = launch_dma(dev);
         break;
     }
     }
@@ -286,6 +296,23 @@ cleanup_pages:
     }
 
     return errcode;
+}
+
+static int launch_dma(struct device *dev)
+{
+    struct DmaControlBlock *cb = da_ctlblk.virtual;
+
+    cb->TI = 0x111; // SRC_INC, DST_INC, interrupt enable
+    cb->SOURCE_AD = (uint32_t)da_coherent.dma_handle;
+    cb->DEST_AD = (uint32_t)da_single.dma_handle;
+    cb->TXFR_LEN = 4096;
+    cb->STRIDE = 0;
+    cb->NEXTCONBK = 0;
+
+    iowrite32((uint32_t)da_ctlblk.dma_handle, dmachan_virt + 4);    // Control Block Address
+    iowrite32(1U << 0, dmachan_virt + 0);    // ACTIVE
+
+    return 0;
 }
 
 static ssize_t
@@ -424,6 +451,7 @@ setup_dma(struct device *dev)
 {
     int rc;
     unsigned int irqnum = 16 + dmaChan;
+    struct DmaAddress *da = &da_ctlblk;
 
     unsigned long dmachan_phys = 0x20007000 + (dmaChan << 8);
     struct resource *res = devm_request_mem_region(dev, dmachan_phys, 0x100, "mymiscdev");
@@ -440,6 +468,7 @@ setup_dma(struct device *dev)
     }
     else {
         pr_debug("dmachan_virt: %#lx\n", (unsigned long)dmachan_virt);
+        iowrite32(1U << 31, dmachan_virt);   // RESET
     }
 
     rc = devm_request_irq(dev, irqnum, dma_irq_handler, IRQF_TRIGGER_RISING,
@@ -448,6 +477,8 @@ setup_dma(struct device *dev)
         dev_warn(dev, "request_irq failed %d\n", rc);
         return;
     }
+
+    da->virtual = dmam_alloc_coherent(dev, 4096, &da->dma_handle, GFP_KERNEL);
 }
 
 static int mymiscdev_probe(struct platform_device *pdev)

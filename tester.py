@@ -19,7 +19,8 @@ pagesize = libc.getpagesize()
 bufsize = 32768
 
 fd = os.open("/dev/mymiscdev", os.O_RDWR)
-mm = mmap.mmap(fd, bufsize, offset=1*pagesize) 
+mm1 = mmap.mmap(fd, bufsize, offset=1*pagesize) 
+mm2 = mmap.mmap(fd, bufsize, offset=2*pagesize) 
 
 memptr = ctypes.c_void_p()
 libc.posix_memalign(ctypes.byref(memptr), 128, bufsize)
@@ -31,6 +32,13 @@ op = get_iocode(0xA5, 1, fmt.size, 'r')
 arg = fmt.pack(memptr.value, bufsize)
 fcntl.ioctl(fd, op, arg)
 
+print('launch dma')
+mm1[:5] = b"HELLO"
+op = get_iocode(0xA5, 2, 0, '')
+fcntl.ioctl(fd, op)
+
 print('attempting read')
 data = os.read(fd, 32)
+
+print(mm2[:128])
 

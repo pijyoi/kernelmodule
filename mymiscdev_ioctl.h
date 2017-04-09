@@ -14,5 +14,8 @@ struct mymiscdev_ioctl
 #define SAMPLE_IOCTL_CMD_1 \
     _IOR(SAMPLE_IOCTL_MAGIC_NUMBER, 1, struct mymiscdev_ioctl)
 
+#define SAMPLE_IOCTL_CMD_2 \
+    _IO(SAMPLE_IOCTL_MAGIC_NUMBER, 2)
+
 #endif
 
