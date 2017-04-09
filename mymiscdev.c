@@ -21,8 +21,12 @@
 #include <linux/kfifo.h>
 #include <linux/platform_device.h>
 
+#include <linux/platform_data/dma-bcm2708.h>
+
+// under arch/arm/mach-bcm270[89]/include
+#include <mach/platform.h>      // for DMA_BASE
+
 #include "mymiscdev_ioctl.h"
-#include "rpi_dma.h"
 
 static int device_open(struct inode *, struct file *);
 static int device_release(struct inode *, struct file *);
@@ -126,11 +130,11 @@ dma_irq_handler(int irq, void *dev_id)
 
     unsigned long cs;
 
-    cs = ioread32(dmachan_virt + 0);
+    cs = ioread32(dmachan_virt + BCM2708_DMA_CS);
 
-    if (!(cs & 4))
+    if (!(cs & BCM2708_DMA_INT))
         return IRQ_NONE;
-    iowrite32(4, dmachan_virt + 0); // clear interrupt
+    iowrite32(BCM2708_DMA_INT, dmachan_virt + BCM2708_DMA_CS); // clear interrupt
 
     do_gettimeofday(&tv);
 
@@ -300,17 +304,17 @@ cleanup_pages:
 
 static int launch_dma(struct device *dev)
 {
-    struct DmaControlBlock *cb = da_ctlblk.virtual;
+    struct bcm2708_dma_cb *cb = da_ctlblk.virtual;
 
-    cb->TI = 0x111; // SRC_INC, DST_INC, interrupt enable
-    cb->SOURCE_AD = (uint32_t)da_coherent.dma_handle;
-    cb->DEST_AD = (uint32_t)da_single.dma_handle;
-    cb->TXFR_LEN = 4096;
-    cb->STRIDE = 0;
-    cb->NEXTCONBK = 0;
+    cb->info = BCM2708_DMA_S_INC | BCM2708_DMA_D_INC | BCM2708_DMA_INT_EN;
+    cb->src = (uint32_t)da_coherent.dma_handle;
+    cb->dst = (uint32_t)da_single.dma_handle;
+    cb->length = 4096;
+    cb->stride = 0;
+    cb->next = 0;
 
-    iowrite32((uint32_t)da_ctlblk.dma_handle, dmachan_virt + 4);    // Control Block Address
-    iowrite32(1U << 0, dmachan_virt + 0);    // ACTIVE
+    iowrite32((uint32_t)da_ctlblk.dma_handle, dmachan_virt + BCM2708_DMA_ADDR);
+    iowrite32(BCM2708_DMA_ACTIVE, dmachan_virt + BCM2708_DMA_CS);
 
     return 0;
 }
@@ -453,7 +457,9 @@ setup_dma(struct device *dev)
     unsigned int irqnum = 16 + dmaChan;
     struct DmaAddress *da = &da_ctlblk;
 
-    unsigned long dmachan_phys = 0x20007000 + (dmaChan << 8);
+    // unsigned long dmachan_phys = 0x20007000 + (dmaChan << 8);
+    // unsigned long dmachan_phys = BCM2708_PERI_BASE + 0x7000 + (dmaChan << 8);
+    unsigned long dmachan_phys = DMA_BASE + (dmaChan << 8);
     struct resource *res = devm_request_mem_region(dev, dmachan_phys, 0x100, "mymiscdev");
     if (!res) {
         dev_warn(dev, "request_mem_region failed\n");
@@ -468,7 +474,7 @@ setup_dma(struct device *dev)
     }
     else {
         pr_debug("dmachan_virt: %#lx\n", (unsigned long)dmachan_virt);
-        iowrite32(1U << 31, dmachan_virt);   // RESET
+        iowrite32(BCM2708_DMA_RESET, dmachan_virt + BCM2708_DMA_CS);
     }
 
     rc = devm_request_irq(dev, irqnum, dma_irq_handler, IRQF_TRIGGER_RISING,
