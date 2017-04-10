@@ -81,6 +81,9 @@ module_param(gpioButton, int, 0);
 static int dmaChan = -1;
 module_param(dmaChan, int, 0);
 
+static int dmaIrq = -1;
+module_param(dmaIrq, int, 0);
+
 DEFINE_KFIFO(fifo_timeval, struct timeval, 32);
 DEFINE_KFIFO(fifo_timestamp, char, 4096);
 
@@ -454,7 +457,7 @@ static void
 setup_dma(struct device *dev)
 {
     int rc;
-    unsigned int irqnum = 16 + dmaChan;
+    int irqnum;
     struct DmaAddress *da = &da_ctlblk;
 
 #if 1
@@ -486,6 +489,7 @@ setup_dma(struct device *dev)
 
     iowrite32(BCM2708_DMA_RESET, dmachan_virt + BCM2708_DMA_CS);
 
+    irqnum = dmaIrq > 0 ? dmaIrq : dmaChan + 46;
     rc = devm_request_irq(dev, irqnum, dma_irq_handler, IRQF_TRIGGER_RISING,
         "mymiscdev", NULL);
     if (rc!=0) {
