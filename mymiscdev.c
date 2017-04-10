@@ -378,12 +378,13 @@ device_mmap(struct file *filp, struct vm_area_struct *vma)
 
     if (vma->vm_pgoff == 0)
     {
-        // for some reason, dma_mmap_coherent will fail for vm_pgoff != 0.
-        // dma_mmap_coherent makes use of vm_pgoff to calculate the offset of
-        // cpu_addr when calling remap_pfn_range, so passing in non-zero vm_pgoff
-        // isn't what we want anyway.
         struct DmaAddress *da = &da_coherent;
 
+        // dma_mmap_coherent makes use of vm_pgoff to calculate the offset of
+        // cpu_addr when calling remap_pfn_range,
+        // since we are (ab)using vm_pgoff as a switch selector, we need to
+        // reset it to 0
+        vma->vm_pgoff = 0;
         rc = dma_mmap_coherent(dev, vma, da->virtual, da->dma_handle, length);
         if (rc!=0) {
             pr_warning("dma_mmap_coherent failed %d\n", rc);
