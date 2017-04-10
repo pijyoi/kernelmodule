@@ -6,6 +6,7 @@ import os
 import mmap
 import fcntl
 import struct
+import time
 
 def get_iocode(magic, num, size, dirn):
     lut = {'':0, 'w':1, 'r':2, 'rw':3}
@@ -33,7 +34,8 @@ arg = fmt.pack(memptr.value, bufsize)
 fcntl.ioctl(fd, op, arg)
 
 print('launch dma')
-mm1[:5] = b"HELLO"
+randbytes = time.ctime().encode()
+mm1[:len(randbytes)] = randbytes
 mm2[:4096] = b'\0'*4096
 
 op = get_iocode(0xA5, 2, 0, '')
@@ -45,5 +47,6 @@ try:
 except KeyboardInterrupt:
     pass
 
+print(mm1[:32])
 print(mm2[:32])
 

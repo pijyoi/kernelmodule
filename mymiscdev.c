@@ -393,7 +393,7 @@ device_mmap(struct file *filp, struct vm_area_struct *vma)
     {
         struct DmaAddress *da = &da_coherent;
 
-        // vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+        vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
         rc = remap_pfn_range(vma, vma->vm_start,
                              virt_to_phys(da->virtual) >> PAGE_SHIFT,
                              length, vma->vm_page_prot);
@@ -405,6 +405,7 @@ device_mmap(struct file *filp, struct vm_area_struct *vma)
     {
         struct DmaAddress *da = &da_single;
 
+        vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
         rc = remap_pfn_range(vma, vma->vm_start,
                              virt_to_phys(da->virtual) >> PAGE_SHIFT,
                              length, vma->vm_page_prot);
