@@ -24,7 +24,7 @@
 #include <linux/platform_data/dma-bcm2708.h>
 
 // under arch/arm/mach-bcm270[89]/include
-#include <mach/platform.h>      // for DMA_BASE
+#include <mach/platform.h>      // for BCM2708_PERI_BASE
 
 #include "mymiscdev_ioctl.h"
 
@@ -463,9 +463,7 @@ setup_dma(struct device *dev)
     struct DmaAddress *da = &da_ctlblk;
 
 #if 1
-    // unsigned long dmachan_phys = 0x20007000 + (dmaChan << 8);
-    // unsigned long dmachan_phys = BCM2708_PERI_BASE + 0x7000 + (dmaChan << 8);
-    unsigned long dmachan_phys = DMA_BASE + (dmaChan << 8);
+    unsigned long dmachan_phys = BCM2708_PERI_BASE + 0x7000 + (dmaChan << 8);
     struct resource *res = devm_request_mem_region(dev, dmachan_phys, 0x100, "mymiscdev");
     if (!res) {
         dev_warn(dev, "request_mem_region failed\n");
@@ -490,6 +488,17 @@ setup_dma(struct device *dev)
     pr_debug("dmachan_virt: %#lx\n", (unsigned long)dmachan_virt);
 
     iowrite32(BCM2708_DMA_RESET, dmachan_virt + BCM2708_DMA_CS);
+
+    if (dmaIrq > 0) {
+        irqnum = dmaIrq;
+    } else {
+        // by checking /proc/interrupts on the different models
+        #if BCM2708_PERI_BASE==0x20000000
+        irqnum = dmaChan + 40;
+        #else
+        irqnum = dmaChan + 46;
+        #endif
+    }
 
     irqnum = dmaIrq > 0 ? dmaIrq : dmaChan + 46;
     rc = devm_request_irq(dev, irqnum, dma_irq_handler, IRQF_TRIGGER_RISING,
