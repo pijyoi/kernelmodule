@@ -494,14 +494,22 @@ setup_dma(struct device *dev)
     } else {
         // by checking /proc/interrupts on the different models
         #if BCM2708_PERI_BASE==0x20000000
-        irqnum = dmaChan + 40;
+        int offset = 40;
         #else
-        irqnum = dmaChan + 46;
+        int offset = 46;
         #endif
+
+        if (dmaChan <= 10) {
+            irqnum = dmaChan + offset;
+        }
+        else {
+            // channels 11-14 share the same interrupt
+            irqnum = 11 + offset;
+        }
     }
 
-    rc = devm_request_irq(dev, irqnum, dma_irq_handler, IRQF_TRIGGER_RISING,
-        "mymiscdev", NULL);
+    rc = devm_request_irq(dev, irqnum, dma_irq_handler, IRQF_SHARED,
+        "mymiscdev", dmachan_virt);
     if (rc!=0) {
         dev_warn(dev, "request_irq failed %d\n", rc);
         return;
