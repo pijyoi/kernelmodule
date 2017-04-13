@@ -500,7 +500,6 @@ setup_dma(struct device *dev)
         #endif
     }
 
-    irqnum = dmaIrq > 0 ? dmaIrq : dmaChan + 46;
     rc = devm_request_irq(dev, irqnum, dma_irq_handler, IRQF_TRIGGER_RISING,
         "mymiscdev", NULL);
     if (rc!=0) {
