@@ -450,6 +450,7 @@ static int mymiscdev_remove(struct platform_device *pdev)
     misc_deregister(&sample_misc);
 
     dma_unmap_single(&pdev->dev, da_single.dma_handle, DMABUFSIZE, DMA_FROM_DEVICE);
+    free_pages((unsigned long)da_single.virtual, DMABUFSIZE_ORDER);
 
     return 0;
 }
