@@ -45,13 +45,6 @@ static struct file_operations sample_fops = {
     .poll = device_poll,
 };
 
-struct miscdevice sample_misc = {
-    .minor = MISC_DYNAMIC_MINOR,
-    .name = "mymiscdev",
-    .fops = &sample_fops,
-    .mode = S_IRUGO | S_IWUGO,
-};
-
 #define DMABUFSIZE_ORDER 8
 #define DMABUFSIZE ((1 << DMABUFSIZE_ORDER)*PAGE_SIZE)
 
@@ -61,8 +54,11 @@ struct DmaAddress
     dma_addr_t dma_handle;
 };
 
-static struct DmaAddress da_coherent;
-static struct DmaAddress da_single;
+struct mymiscdev_data {
+    struct miscdevice miscdev;
+    struct DmaAddress da_coherent;
+    struct DmaAddress da_single;
+};
 
 static DECLARE_WAIT_QUEUE_HEAD(device_read_wait);
 static atomic_t hardirq_cnt = ATOMIC_INIT(0);
@@ -306,6 +302,7 @@ static int
 device_mmap(struct file *filp, struct vm_area_struct *vma)
 {
     struct miscdevice *miscdev = filp->private_data;    // filled in by misc_register
+    struct mymiscdev_data *drvdata = container_of(miscdev, struct mymiscdev_data, miscdev);
     struct device *dev = miscdev->parent;
 
     int rc;
@@ -323,7 +320,7 @@ device_mmap(struct file *filp, struct vm_area_struct *vma)
         // dma_mmap_coherent makes use of vm_pgoff to calculate the offset of
         // cpu_addr when calling remap_pfn_range, so passing in non-zero vm_pgoff
         // isn't what we want anyway.
-        struct DmaAddress *da = &da_coherent;
+        struct DmaAddress *da = &drvdata->da_coherent;
 
         rc = dma_mmap_coherent(dev, vma, da->virtual, da->dma_handle, length);
         if (rc!=0) {
@@ -332,7 +329,7 @@ device_mmap(struct file *filp, struct vm_area_struct *vma)
     }
     else if (vma->vm_pgoff == 1)
     {
-        struct DmaAddress *da = &da_coherent;
+        struct DmaAddress *da = &drvdata->da_coherent;
 
         // vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
         rc = remap_pfn_range(vma, vma->vm_start,
@@ -344,7 +341,7 @@ device_mmap(struct file *filp, struct vm_area_struct *vma)
     }
     else if (vma->vm_pgoff == 2)
     {
-        struct DmaAddress *da = &da_single;
+        struct DmaAddress *da = &drvdata->da_single;
 
         rc = remap_pfn_range(vma, vma->vm_start,
                              virt_to_phys(da->virtual) >> PAGE_SHIFT,
@@ -397,15 +394,20 @@ setup_gpio(struct device *dev)
 static int mymiscdev_probe(struct platform_device *pdev)
 {
     int rc;
+    struct mymiscdev_data *drvdata;
     struct DmaAddress *da;
 
     pr_debug("%s\n", __func__);
+
+    drvdata = devm_kzalloc(&pdev->dev, sizeof(*drvdata), GFP_KERNEL);
+    if (!drvdata)
+        return -ENOMEM;
 
     if (dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32))) {
         pr_warning("mymiscdev: No suitable DMA available\n");
     }
 
-    da = &da_coherent;
+    da = &drvdata->da_coherent;
     da->virtual = dmam_alloc_coherent(&pdev->dev, DMABUFSIZE, &da->dma_handle, GFP_KERNEL);
     if (!da->virtual) {
         pr_warning("dmam_alloc_coherent failed\n");
@@ -413,7 +415,7 @@ static int mymiscdev_probe(struct platform_device *pdev)
     }
     pr_debug("dma_handle: %#llx\n", (unsigned long long)da->dma_handle);
 
-    da = &da_single;
+    da = &drvdata->da_single;
     da->virtual = (void*)__get_free_pages(GFP_KERNEL | GFP_DMA32, DMABUFSIZE_ORDER);
     if (!da->virtual) {
         pr_warning("get_free_pages failed\n");
@@ -423,7 +425,7 @@ static int mymiscdev_probe(struct platform_device *pdev)
     if (dma_mapping_error(&pdev->dev, da->dma_handle)) {
         pr_warning("dma_map_single failed\n");
 
-        free_pages((unsigned long)da_single.virtual, DMABUFSIZE_ORDER);
+        free_pages((unsigned long)da->virtual, DMABUFSIZE_ORDER);
         return -EBUSY;
     }
     pr_debug("dma_handle: %#llx\n", (unsigned long long)da->dma_handle);
@@ -431,13 +433,21 @@ static int mymiscdev_probe(struct platform_device *pdev)
     if (gpioButton >= 0)
         setup_gpio(&pdev->dev);
 
-    sample_misc.parent = &pdev->dev;
-    rc = misc_register(&sample_misc);
+    drvdata->miscdev.minor = MISC_DYNAMIC_MINOR,
+    drvdata->miscdev.name = "mymiscdev",
+    drvdata->miscdev.fops = &sample_fops,
+    drvdata->miscdev.parent = &pdev->dev;
+    drvdata->miscdev.mode = S_IRUGO | S_IWUGO,
+
+    platform_set_drvdata(pdev, drvdata);
+
+    rc = misc_register(&drvdata->miscdev);
     if (rc!=0) {
         pr_warning("misc_register failed %d\n", rc);
 
-        dma_unmap_single(&pdev->dev, da_single.dma_handle, DMABUFSIZE, DMA_FROM_DEVICE);
-        free_pages((unsigned long)da_single.virtual, DMABUFSIZE_ORDER);
+        da = &drvdata->da_single;
+        dma_unmap_single(&pdev->dev, da->dma_handle, DMABUFSIZE, DMA_FROM_DEVICE);
+        free_pages((unsigned long)da->virtual, DMABUFSIZE_ORDER);
     }
 
     return rc;
@@ -445,12 +455,17 @@ static int mymiscdev_probe(struct platform_device *pdev)
 
 static int mymiscdev_remove(struct platform_device *pdev)
 {
+    struct mymiscdev_data *drvdata;
+    struct DmaAddress *da;
+
     pr_debug("%s\n", __func__);
 
-    misc_deregister(&sample_misc);
+    drvdata = platform_get_drvdata(pdev);
+    misc_deregister(&drvdata->miscdev);
 
-    dma_unmap_single(&pdev->dev, da_single.dma_handle, DMABUFSIZE, DMA_FROM_DEVICE);
-    free_pages((unsigned long)da_single.virtual, DMABUFSIZE_ORDER);
+    da = &drvdata->da_single;
+    dma_unmap_single(&pdev->dev, da->dma_handle, DMABUFSIZE, DMA_FROM_DEVICE);
+    free_pages((unsigned long)da->virtual, DMABUFSIZE_ORDER);
 
     return 0;
 }
