@@ -23,8 +23,8 @@
 
 #include <linux/platform_data/dma-bcm2708.h>
 
-// under arch/arm/mach-bcm270[89]/include
-#include <mach/platform.h>      // for BCM2708_PERI_BASE
+//#define BCM2708_PERI_BASE 0x20000000  // rpi1
+#define BCM2708_PERI_BASE 0x3F000000
 
 #include "mymiscdev_ioctl.h"
 
