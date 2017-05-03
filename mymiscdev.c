@@ -464,14 +464,12 @@ setup_dma(struct device *dev)
 
 #if 1
     unsigned long dmachan_phys = BCM2708_PERI_BASE + 0x7000 + (dmaChan << 8);
-    struct resource *res = devm_request_mem_region(dev, dmachan_phys, 0x100, "mymiscdev");
-    if (!res) {
+    if (!devm_request_mem_region(dev, dmachan_phys, 0x100, "mymiscdev")) {
         dev_warn(dev, "request_mem_region failed\n");
         // return;
     }
     pr_debug("dmachan_phys: %#lx\n", dmachan_phys);
 
-    // devm_ioremap_resource(dev, res);
     dmachan_virt = devm_ioremap(dev, dmachan_phys, 0x100);
     if (IS_ERR(dmachan_virt)) {
         int err = PTR_ERR(dmachan_virt);
