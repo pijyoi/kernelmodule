@@ -100,7 +100,16 @@ static irqreturn_t
 gpio_irq_handler(int irq, void *dev_id)
 {
     struct timeval tv;
+
+    #if LINUX_VERSION_CODE < KERNEL_VERSION(5,0,0)
     do_gettimeofday(&tv);
+    #else
+    struct timespec64 ts;
+
+    ktime_get_real_ts64(&ts);
+    tv.tv_sec = ts.tv_sec;
+    tv.tv_usec = ts.tv_nsec/1000;
+    #endif
 
     kfifo_in(&fifo_timeval, &tv, 1);
     atomic_inc(&hardirq_cnt);
