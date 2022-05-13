@@ -36,6 +36,7 @@ int main()
         perror("mmap");
         return -1;
     }
+    memset(mapptr, 0x5A, bufsize);
 
     void *memptr = 0;
     rc = posix_memalign(&memptr, 128, bufsize);
