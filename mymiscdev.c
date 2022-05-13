@@ -75,7 +75,11 @@ DEFINE_KFIFO(fifo_timeval, struct TimeStamp, 32);
 DEFINE_KFIFO(fifo_timestamp, char, 4096);
 
 static void
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,9,0)
 gpio_do_tasklet(unsigned long data)
+#else
+gpio_do_tasklet(struct tasklet_struct *tasklet)
+#endif
 {
     // NOTE: another interrupt could be delivered while the tasklet is executing
 
@@ -99,7 +103,11 @@ gpio_do_tasklet(unsigned long data)
     wake_up_interruptible(&device_read_wait);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,9,0)
 DECLARE_TASKLET(gpio_tasklet, gpio_do_tasklet, 0);
+#else
+DECLARE_TASKLET(gpio_tasklet, gpio_do_tasklet);
+#endif
 
 static irqreturn_t
 gpio_irq_handler(int irq, void *dev_id)
