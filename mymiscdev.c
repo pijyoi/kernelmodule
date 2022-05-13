@@ -60,13 +60,18 @@ struct mymiscdev_data {
     struct DmaAddress da_single;
 };
 
+struct TimeStamp {
+    long tv_sec;
+    long tv_nsec;
+};
+
 static DECLARE_WAIT_QUEUE_HEAD(device_read_wait);
 static atomic_t hardirq_cnt = ATOMIC_INIT(0);
 
 static int gpioButton = -1;    // specific to your setup
 module_param(gpioButton, int, 0);
 
-DEFINE_KFIFO(fifo_timeval, struct timeval, 32);
+DEFINE_KFIFO(fifo_timeval, struct TimeStamp, 32);
 DEFINE_KFIFO(fifo_timestamp, char, 4096);
 
 static void
@@ -75,17 +80,17 @@ gpio_do_tasklet(unsigned long data)
     // NOTE: another interrupt could be delivered while the tasklet is executing
 
     int saved_hardirq_cnt = atomic_xchg(&hardirq_cnt, 0);
-    struct timeval tv;
+    struct TimeStamp ts;
     char strbuf[16];
     int idx;
 
     // any interrupts that arrive during the execution of this tasklet will
     // be processed by the next tasklet_schedule
     for (idx=0; idx < saved_hardirq_cnt; idx++) {
-        int ret = kfifo_out(&fifo_timeval, &tv, 1);
+        int ret = kfifo_out(&fifo_timeval, &ts, 1);
         BUG_ON(ret==0);
         snprintf(strbuf, sizeof(strbuf), "%08u.%06u",
-                (int)(tv.tv_sec % 100000000), (int)(tv.tv_usec));
+                (int)(ts.tv_sec % 100000000), (int)(ts.tv_nsec / 1000));
         strbuf[sizeof(strbuf)-1] = '\n';
         kfifo_in(&fifo_timestamp, strbuf, sizeof(strbuf));
     }
@@ -99,19 +104,21 @@ DECLARE_TASKLET(gpio_tasklet, gpio_do_tasklet, 0);
 static irqreturn_t
 gpio_irq_handler(int irq, void *dev_id)
 {
-    struct timeval tv;
+    struct TimeStamp dst;
 
-    #if LINUX_VERSION_CODE < KERNEL_VERSION(5,0,0)
-    do_gettimeofday(&tv);
+    #if LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0)
+    struct timeval src;
+    do_gettimeofday(&src);
+    dst.tv_sec = src.tv_sec;
+    dst.tv_nsec = src.tv_usec * 1000;
     #else
-    struct timespec64 ts;
-
-    ktime_get_real_ts64(&ts);
-    tv.tv_sec = ts.tv_sec;
-    tv.tv_usec = ts.tv_nsec/1000;
+    struct timespec64 src;
+    ktime_get_real_ts64(&src);
+    dst.tv_sec = src.tv_sec;
+    dst.tv_nsec = src.tv_nsec;
     #endif
 
-    kfifo_in(&fifo_timeval, &tv, 1);
+    kfifo_in(&fifo_timeval, &dst, 1);
     atomic_inc(&hardirq_cnt);
     tasklet_schedule(&gpio_tasklet);
     return IRQ_HANDLED;
