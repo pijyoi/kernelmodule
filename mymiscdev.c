@@ -69,7 +69,9 @@ static DECLARE_WAIT_QUEUE_HEAD(device_read_wait);
 static atomic_t hardirq_cnt = ATOMIC_INIT(0);
 
 static int gpioButton = -1;    // specific to your setup
+static int dmaBitMask = 32;
 module_param(gpioButton, int, 0);
+module_param(dmaBitMask, int, 0);
 
 DEFINE_KFIFO(fifo_timeval, struct TimeStamp, 32);
 DEFINE_KFIFO(fifo_timestamp, char, 4096);
@@ -130,6 +132,27 @@ gpio_irq_handler(int irq, void *dev_id)
     atomic_inc(&hardirq_cnt);
     tasklet_schedule(&gpio_tasklet);
     return IRQ_HANDLED;
+}
+
+static void
+print_pfn(void *cpu_addr, dma_addr_t bus_addr)
+{
+    int idx;
+    pr_debug("cpu_addr: %#llx; bus_addr: %#llx\n",
+        (unsigned long long)cpu_addr,
+        (unsigned long long)bus_addr);
+
+    for (idx=0; idx < 8; idx++) {
+        void *ptr = cpu_addr + idx * PAGE_SIZE;
+        unsigned long pfn = 0;
+        bool is_virt = is_vmalloc_addr(ptr);
+        if (is_vmalloc_addr(ptr)) {
+            pfn = vmalloc_to_pfn(ptr);
+        } else {
+            pfn = virt_to_phys(ptr) >> PAGE_SHIFT;
+        }
+        pr_debug("%d: %#lx %s\n", idx, pfn, is_virt ? "virtual" : "logical");
+    }
 }
 
 static int
@@ -367,9 +390,16 @@ device_mmap(struct file *filp, struct vm_area_struct *vma)
     {
         struct DmaAddress *da = &drvdata->da_coherent;
 
+        unsigned long pfn;
+        if (is_vmalloc_addr(da->virtual)) {
+            pfn = vmalloc_to_pfn(da->virtual);
+        } else {
+            pfn = virt_to_phys(da->virtual) >> PAGE_SHIFT;
+        }
+
         // vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
         rc = remap_pfn_range(vma, vma->vm_start,
-                             virt_to_phys(da->virtual) >> PAGE_SHIFT,
+                             pfn,
                              length, vma->vm_page_prot);
         if (rc!=0) {
             pr_warn("remap_pfn_range failed %d\n", rc);
@@ -439,7 +469,8 @@ static int mymiscdev_probe(struct platform_device *pdev)
     if (!drvdata)
         return -ENOMEM;
 
-    if (dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32))) {
+    // by using DMA_BIT_MASK(32), our bus addresses will be limited to 32-bits
+    if (dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(dmaBitMask))) {
         pr_warn("mymiscdev: No suitable DMA available\n");
     }
 
@@ -449,10 +480,11 @@ static int mymiscdev_probe(struct platform_device *pdev)
         pr_warn("dmam_alloc_coherent failed\n");
         return -ENOMEM;
     }
-    pr_debug("dma_handle: %#llx\n", (unsigned long long)da->dma_handle);
+    // dma_alloc_coherent returns kernel virtual addresses (at least on ARM)
+    print_pfn(da->virtual, da->dma_handle);
 
     da = &drvdata->da_single;
-    da->virtual = (void*)__get_free_pages(GFP_KERNEL | GFP_DMA32, DMABUFSIZE_ORDER);
+    da->virtual = (void*)__get_free_pages(GFP_KERNEL, DMABUFSIZE_ORDER);
     if (!da->virtual) {
         pr_warn("get_free_pages failed\n");
         return -ENOMEM;
@@ -464,7 +496,8 @@ static int mymiscdev_probe(struct platform_device *pdev)
         free_pages((unsigned long)da->virtual, DMABUFSIZE_ORDER);
         return -EBUSY;
     }
-    pr_debug("dma_handle: %#llx\n", (unsigned long long)da->dma_handle);
+    // __get_free_pages returns kernel logical addresses
+    print_pfn(da->virtual, da->dma_handle);
 
     if (gpioButton >= 0)
         setup_gpio(&pdev->dev);
