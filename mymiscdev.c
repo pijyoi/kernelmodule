@@ -160,6 +160,18 @@ device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     return retcode;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,8,0)
+static inline void mmap_read_lock(struct mm_struct *mm)
+{
+    down_read(&mm->mmap_sem);
+}
+
+static inline void mmap_read_unlock(struct mm_struct *mm)
+{
+    up_read(&mm->mmap_sem);
+}
+#endif
+
 static int user_scatter_gather(struct device *dev, char __user *userbuf, size_t nbytes)
 {
     int errcode = 0;
@@ -192,7 +204,7 @@ static int user_scatter_gather(struct device *dev, char __user *userbuf, size_t 
     }
 
     // get_user_pages also locks the user-space buffer into memory
-    down_read(&current->mm->mmap_sem);
+    mmap_read_lock(current->mm);
     actual_pages = get_user_pages(
         #if LINUX_VERSION_CODE < KERNEL_VERSION(4,6,1)
         current, current->mm,
@@ -205,7 +217,7 @@ static int user_scatter_gather(struct device *dev, char __user *userbuf, size_t 
         #else
         (unsigned long)userbuf, num_pages, FOLL_WRITE, pages, NULL);
         #endif
-    up_read(&current->mm->mmap_sem);
+    mmap_read_unlock(current->mm);
 
     if (actual_pages != num_pages) {
         pr_warn("get_user_pages returned %d / %d\n", actual_pages, num_pages);
