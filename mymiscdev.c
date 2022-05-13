@@ -208,7 +208,7 @@ static int user_scatter_gather(struct device *dev, char __user *userbuf, size_t 
     up_read(&current->mm->mmap_sem);
 
     if (actual_pages != num_pages) {
-        pr_warning("get_user_pages returned %d / %d\n", actual_pages, num_pages);
+        pr_warn("get_user_pages returned %d / %d\n", actual_pages, num_pages);
         errcode = actual_pages < 0 ? actual_pages : -EAGAIN;
         // need to cleanup_pages for the case 0 < actual_pages < num_pages
         goto cleanup_pages;
@@ -218,7 +218,7 @@ static int user_scatter_gather(struct device *dev, char __user *userbuf, size_t 
 
     errcode = sg_alloc_table_from_pages(&sgtbl, pages, num_pages, offset, nbytes, GFP_KERNEL);
     if (errcode) {
-        pr_warning("sg_alloc_table_from_pages returned %d\n", errcode);
+        pr_warn("sg_alloc_table_from_pages returned %d\n", errcode);
         goto cleanup_pages;
     }
 
@@ -235,7 +235,7 @@ static int user_scatter_gather(struct device *dev, char __user *userbuf, size_t 
 
     sg_count = dma_map_sg(dev, sgtbl.sgl, sgtbl.nents, DMA_FROM_DEVICE);
     if (sg_count==0) {
-        pr_warning("dma_map_sg returned 0\n");
+        pr_warn("dma_map_sg returned 0\n");
         errcode = -EAGAIN;
         goto cleanup_sgtbl;
     }
@@ -333,7 +333,7 @@ device_mmap(struct file *filp, struct vm_area_struct *vma)
 
         rc = dma_mmap_coherent(dev, vma, da->virtual, da->dma_handle, length);
         if (rc!=0) {
-            pr_warning("dma_mmap_coherent failed %d\n", rc);
+            pr_warn("dma_mmap_coherent failed %d\n", rc);
         }
     }
     else if (vma->vm_pgoff == 1)
@@ -345,7 +345,7 @@ device_mmap(struct file *filp, struct vm_area_struct *vma)
                              virt_to_phys(da->virtual) >> PAGE_SHIFT,
                              length, vma->vm_page_prot);
         if (rc!=0) {
-            pr_warning("remap_pfn_range failed %d\n", rc);
+            pr_warn("remap_pfn_range failed %d\n", rc);
         }
     }
     else if (vma->vm_pgoff == 2)
@@ -356,7 +356,7 @@ device_mmap(struct file *filp, struct vm_area_struct *vma)
                              virt_to_phys(da->virtual) >> PAGE_SHIFT,
                              length, vma->vm_page_prot);
         if (rc!=0) {
-            pr_warning("remap_pfn_range failed %d\n", rc);
+            pr_warn("remap_pfn_range failed %d\n", rc);
         }
     }
     else
@@ -413,13 +413,13 @@ static int mymiscdev_probe(struct platform_device *pdev)
         return -ENOMEM;
 
     if (dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32))) {
-        pr_warning("mymiscdev: No suitable DMA available\n");
+        pr_warn("mymiscdev: No suitable DMA available\n");
     }
 
     da = &drvdata->da_coherent;
     da->virtual = dmam_alloc_coherent(&pdev->dev, DMABUFSIZE, &da->dma_handle, GFP_KERNEL);
     if (!da->virtual) {
-        pr_warning("dmam_alloc_coherent failed\n");
+        pr_warn("dmam_alloc_coherent failed\n");
         return -ENOMEM;
     }
     pr_debug("dma_handle: %#llx\n", (unsigned long long)da->dma_handle);
@@ -427,12 +427,12 @@ static int mymiscdev_probe(struct platform_device *pdev)
     da = &drvdata->da_single;
     da->virtual = (void*)__get_free_pages(GFP_KERNEL | GFP_DMA32, DMABUFSIZE_ORDER);
     if (!da->virtual) {
-        pr_warning("get_free_pages failed\n");
+        pr_warn("get_free_pages failed\n");
         return -ENOMEM;
     }
     da->dma_handle = dma_map_single(&pdev->dev, da->virtual, DMABUFSIZE, DMA_FROM_DEVICE);
     if (dma_mapping_error(&pdev->dev, da->dma_handle)) {
-        pr_warning("dma_map_single failed\n");
+        pr_warn("dma_map_single failed\n");
 
         free_pages((unsigned long)da->virtual, DMABUFSIZE_ORDER);
         return -EBUSY;
@@ -452,7 +452,7 @@ static int mymiscdev_probe(struct platform_device *pdev)
 
     rc = misc_register(&drvdata->miscdev);
     if (rc!=0) {
-        pr_warning("misc_register failed %d\n", rc);
+        pr_warn("misc_register failed %d\n", rc);
 
         da = &drvdata->da_single;
         dma_unmap_single(&pdev->dev, da->dma_handle, DMABUFSIZE, DMA_FROM_DEVICE);
