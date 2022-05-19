@@ -315,6 +315,8 @@ cleanup_pages:
         put_page(pages[page_idx]);
     }
 
+    kfree(pages);
+
     return errcode;
 }
 
