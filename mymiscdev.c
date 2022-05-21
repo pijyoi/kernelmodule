@@ -303,6 +303,7 @@ cleanup_sgtbl:
 cleanup_pages:
     for (page_idx=0; page_idx < actual_pages; page_idx++) {
         // alias page_cache_release has been removed
+        set_page_dirty(pages[page_idx]);
         put_page(pages[page_idx]);
     }
 
