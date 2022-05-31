@@ -20,6 +20,7 @@
 #include <linux/atomic.h>
 #include <linux/kfifo.h>
 #include <linux/platform_device.h>
+#include <linux/pci.h>
 
 #include "mymiscdev_ioctl.h"
 
@@ -56,6 +57,7 @@ struct DmaAddress
 
 struct mymiscdev_data {
     struct miscdevice miscdev;
+    void *iomem;
     struct DmaAddress da_coherent;
     struct DmaAddress da_single;
 };
@@ -175,6 +177,7 @@ device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
     struct miscdevice *miscdev = filp->private_data;    // filled in by misc_register
     struct device *dev = miscdev->parent;
+    struct mymiscdev_data *drvdata = container_of(miscdev, struct mymiscdev_data, miscdev);
 
     int retcode = -ENOTTY;
 
@@ -191,6 +194,71 @@ device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         // struct mymiscdev_ioctl *param = (struct mymiscdev_ioctl*)arg;
         pr_debug("ioctl_cmd_1 %p %zu\n", param.buffer, param.len);
         retcode = user_scatter_gather(dev, param.buffer, param.len);
+        break;
+    }
+    case MYMISCDEV_IOCTL_REG:
+    {
+        struct mymiscdev_ioctl_reg param;
+        void *ioaddr;
+        int err = copy_from_user(&param, (void*)arg, sizeof(param));
+        if (err) {
+            return -EFAULT;
+        }
+        pr_debug("ioctl_reg %d 0x%x %u\n", param.write, param.addr, param.val);
+
+        if (param.addr & 0x3) {
+            return -EIO;
+        }
+        if (param.addr > 0xFFFFC) {
+            return -EIO;
+        }
+        ioaddr = drvdata->iomem + param.addr;
+        if (param.write) {
+            writel(param.val, ioaddr);
+            retcode = 0;
+        } else {
+            param.val = readl(ioaddr);
+            retcode = copy_to_user((void*)arg, &param, sizeof(param));
+        }
+        break;
+    }
+    case MYMISCDEV_IOCTL_DMA:
+    {
+        struct mymiscdev_ioctl_dma param;
+        uint32_t src_addr;
+        uint32_t dst_addr;
+        uint32_t ram_busaddr;
+        uint32_t edu_devaddr;
+        uint32_t dmacmd;
+        int err = copy_from_user(&param, (void*)arg, sizeof(param));
+        if (err) {
+            return -EFAULT;
+        }
+        pr_debug("ioctl_dma %d %u\n", param.write, param.len);
+
+        if (param.len > 4096) {
+            return -EINVAL;
+        }
+
+        ram_busaddr = (uint32_t)drvdata->da_coherent.dma_handle + param.offset;
+        edu_devaddr = 0x40000;
+        pr_debug("ram_busaddr: 0x%x\n", ram_busaddr);
+        if (param.write) {
+            // dma from RAM to EDU
+            src_addr = ram_busaddr;
+            dst_addr = edu_devaddr;
+            dmacmd = 1;
+        } else {
+            // dma from EDU to RAM
+            src_addr = edu_devaddr;
+            dst_addr = ram_busaddr;
+            dmacmd = 3;
+        }
+        writel(src_addr, drvdata->iomem + 0x80);
+        writel(dst_addr, drvdata->iomem + 0x88);
+        writel(param.len, drvdata->iomem + 0x90);
+        writel(dmacmd, drvdata->iomem + 0x98);
+        retcode = 0;
         break;
     }
     }
@@ -451,10 +519,19 @@ setup_gpio(struct device *dev)
     }
 }
 
-static int mymiscdev_probe(struct platform_device *pdev)
+static struct pci_device_id my_driver_id_table[] = {
+    { PCI_DEVICE(0x1234, 0x11e8) },
+    {0, }
+};
+
+MODULE_DEVICE_TABLE(pci, my_driver_id_table);
+
+static int mypcidev_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
-    int rc;
+    int err;
+    int bar = 0;
     struct mymiscdev_data *drvdata;
+    unsigned long mmio_base, mmio_len;
     struct DmaAddress *da;
 
     pr_debug("%s\n", __func__);
@@ -463,9 +540,37 @@ static int mymiscdev_probe(struct platform_device *pdev)
     if (!drvdata)
         return -ENOMEM;
 
-    // by using DMA_BIT_MASK(32), our bus addresses will be limited to 32-bits
-    if (dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(dmaBitMask))) {
-        pr_warn("mymiscdev: No suitable DMA available\n");
+    pr_debug("pci_enable_device_mem: %d\n", err);
+    err = pci_enable_device_mem(pdev);
+    if (err) {
+        return err;
+    }
+
+    err = pci_request_region(pdev, bar, "mypcidev");
+    pr_debug("pci_request_region: %d\n", err);
+    if (err) {
+        pci_disable_device(pdev);
+        return err;
+    }
+
+    mmio_base = pci_resource_start(pdev, bar);
+    mmio_len = pci_resource_len(pdev, bar);
+    pr_debug("bar %d: base 0x%lx; len 0x%lx\n", bar, mmio_base, mmio_len);
+
+    drvdata->iomem = pci_iomap(pdev, bar, 0);
+    pr_debug("pci_iomap: %p\n", drvdata->iomem);
+    if (!drvdata->iomem) {
+        pci_release_region(pdev, bar);
+        pci_disable_device(pdev);
+        return -EIO;
+    }
+
+    pci_set_master(pdev);
+
+    pci_set_drvdata(pdev, drvdata);
+
+    if (dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(28))) {
+        pr_warn("mypcidev: No suitable DMA available\n");
     }
 
     da = &drvdata->da_coherent;
@@ -483,6 +588,7 @@ static int mymiscdev_probe(struct platform_device *pdev)
         pr_warn("get_free_pages failed\n");
         return -ENOMEM;
     }
+    #if 0
     da->dma_handle = dma_map_single(&pdev->dev, da->virtual, DMABUFSIZE, DMA_FROM_DEVICE);
     if (dma_mapping_error(&pdev->dev, da->dma_handle)) {
         pr_warn("dma_map_single failed\n");
@@ -492,6 +598,7 @@ static int mymiscdev_probe(struct platform_device *pdev)
     }
     // __get_free_pages returns kernel logical addresses
     print_pfn(da->virtual, da->dma_handle);
+    #endif
 
     if (gpioButton >= 0)
         setup_gpio(&pdev->dev);
@@ -502,77 +609,61 @@ static int mymiscdev_probe(struct platform_device *pdev)
     drvdata->miscdev.parent = &pdev->dev;
     drvdata->miscdev.mode = S_IRUGO | S_IWUGO,
 
-    platform_set_drvdata(pdev, drvdata);
-
-    rc = misc_register(&drvdata->miscdev);
-    if (rc!=0) {
-        pr_warn("misc_register failed %d\n", rc);
+    err = misc_register(&drvdata->miscdev);
+    if (err) {
+        pr_warn("misc_register failed %d\n", err);
 
         da = &drvdata->da_single;
+        #if 0
         dma_unmap_single(&pdev->dev, da->dma_handle, DMABUFSIZE, DMA_FROM_DEVICE);
+        #endif
         free_pages((unsigned long)da->virtual, DMABUFSIZE_ORDER);
     }
 
-    return rc;
+    return err;
 }
 
-static int mymiscdev_remove(struct platform_device *pdev)
+static void mypcidev_remove(struct pci_dev *pdev)
 {
-    struct mymiscdev_data *drvdata;
+    struct mymiscdev_data *drvdata = pci_get_drvdata(pdev);
     struct DmaAddress *da;
 
     pr_debug("%s\n", __func__);
 
-    drvdata = platform_get_drvdata(pdev);
+    pci_iounmap(pdev, drvdata->iomem);
+    pci_release_region(pdev, 0);
+    pci_disable_device(pdev);
+
     misc_deregister(&drvdata->miscdev);
 
     da = &drvdata->da_single;
+    #if 0
     dma_unmap_single(&pdev->dev, da->dma_handle, DMABUFSIZE, DMA_FROM_DEVICE);
+    #endif
     free_pages((unsigned long)da->virtual, DMABUFSIZE_ORDER);
-
-    return 0;
 }
 
-static struct platform_driver mymiscdev_driver = {
-    .probe      = mymiscdev_probe,
-    .remove     = mymiscdev_remove,
-    .driver     = {
-        .name   = "mymiscdev",
-    },
+static struct pci_driver my_driver = {
+    .name = "mypcidev",
+    .id_table = my_driver_id_table,
+    .probe = mypcidev_probe,
+    .remove = mypcidev_remove,
 };
-
-static struct platform_device *platform_device;
 
 static int __init device_init(void)
 {
     int err;
-    struct platform_device_info pdevinfo = {
-        .name       = "mymiscdev",
-        .id         = -1,
-        .res        = NULL,
-        .num_res    = 0,
-        .dma_mask   = DMA_BIT_MASK(32),
-    };
 
-    err = platform_driver_register(&mymiscdev_driver);
+    err = pci_register_driver(&my_driver);
     if (err)
         return err;
-
-    // platform_device = platform_device_register_simple("mymiscdev", -1, NULL, 0);
-    platform_device = platform_device_register_full(&pdevinfo);
-
-    if (IS_ERR(platform_device)) {
-        err = PTR_ERR(platform_device);
-        platform_driver_unregister(&mymiscdev_driver);
-    }
 
     return err;
 }
 
 static void __exit device_exit(void)
 {
-    platform_device_unregister(platform_device);
-    platform_driver_unregister(&mymiscdev_driver);
+    pci_unregister_driver(&my_driver);
 }
 
 module_init(device_init)
