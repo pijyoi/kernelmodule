@@ -52,7 +52,6 @@ def do_dma_kernel(write, offset, length):
 
 def do_dma_user(write, ptr, length):
     fmt = struct.Struct("iPI4x")
-    print(fmt.size)
     op = get_iocode(0xA5, 4, fmt.size, 'w')
     arg = fmt.pack(write, ptr, length)
     fcntl.ioctl(fd, op, arg)
@@ -92,8 +91,8 @@ for idx in range(length):
 
 memptr = ctypes.c_void_p()
 libc.posix_memalign(ctypes.byref(memptr), pagesize, bufsize)
+data = ctypes.cast(memptr, ctypes.POINTER(ctypes.c_ubyte))
 
 do_dma_user(0, memptr.value, length)
 for idx in range(length):
-    assert mm[offset + idx] == idx
-
+    assert data[idx] == idx
