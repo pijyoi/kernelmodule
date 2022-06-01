@@ -60,6 +60,7 @@ struct mymiscdev_data {
     void *iomem;
     struct DmaAddress da_coherent;
     struct DmaAddress da_single;
+    uint32_t int_status;
 };
 
 struct TimeStamp {
@@ -136,6 +137,25 @@ gpio_irq_handler(int irq, void *dev_id)
     return IRQ_HANDLED;
 }
 
+static irqreturn_t
+edu_irq_handler(int irq, void *dev_id)
+{
+    struct mymiscdev_data *drvdata = dev_id;
+    uint32_t status;
+    status = readl(drvdata->iomem + 0x24);
+    writel(status, drvdata->iomem + 0x64);
+    drvdata->int_status = status;
+    return IRQ_WAKE_THREAD;
+}
+
+static irqreturn_t
+edu_irq_threadfn(int irq, void *dev_id)
+{
+    struct mymiscdev_data *drvdata = dev_id;
+    pr_debug("%s read int_status 0x%x\n", __func__, drvdata->int_status);
+    return IRQ_HANDLED;
+}
+
 static void
 print_pfn(void *cpu_addr, dma_addr_t bus_addr)
 {
@@ -183,11 +203,11 @@ start_dma(void *mmio, int dirn, dma_addr_t ram_busaddr, uint32_t edu_offset, uin
     if (dirn == DMA_TO_DEVICE) {
         src_addr = ram_busaddr;
         dst_addr = edu_devaddr;
-        dmacmd = 1;
+        dmacmd = 1 | 4;
     } else if (dirn == DMA_FROM_DEVICE) {
         src_addr = edu_devaddr;
         dst_addr = ram_busaddr;
-        dmacmd = 3;
+        dmacmd = 3 | 4;
     }
     if (dmacmd) {
         writel(src_addr, mmio + 0x80);
@@ -613,8 +633,8 @@ static int mypcidev_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
     if (!drvdata)
         return -ENOMEM;
 
-    pr_debug("pcim_enable_device: %d\n", err);
     err = pcim_enable_device(pdev);
+    pr_debug("pcim_enable_device: %d\n", err);
     if (err) {
         return err;
     }
@@ -667,6 +687,15 @@ static int mypcidev_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
     // __get_free_pages returns kernel logical addresses
     print_pfn(da->virtual, da->dma_handle);
     #endif
+
+    err = devm_request_threaded_irq(
+        &pdev->dev, pdev->irq,
+        edu_irq_handler, edu_irq_threadfn,
+        IRQF_SHARED,
+        "mypcidev", drvdata);
+    if (err) {
+        pr_warn("request_threaded_irq failed\n");
+    }
 
     if (gpioButton >= 0)
         setup_gpio(&pdev->dev);
