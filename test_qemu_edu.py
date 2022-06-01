@@ -35,7 +35,7 @@ def write_reg(addr, val):
     fmt.pack_into(arg, 0, 1, addr, val)
     fcntl.ioctl(fd, op, arg)
 
-def do_dma(write, offset, length):
+def do_dma_kernel(write, offset, length):
     fmt = struct.Struct("iII")
     op = get_iocode(0xA5, 3, fmt.size, 'w')
     arg = fmt.pack(write, offset, length)
@@ -50,6 +50,12 @@ def do_dma(write, offset, length):
         time.sleep(0.01)
     return cnt
 
+def do_dma_user(write, ptr, length):
+    fmt = struct.Struct("iPI4x")
+    op = get_iocode(0xA5, 4, fmt.size, 'w')
+    arg = fmt.pack(write, ptr, length)
+    fcntl.ioctl(fd, op, arg)
+ 
 print(hex(read_reg(0)))
 
 # check bit inversion
@@ -73,14 +79,20 @@ length = 256
 for idx in range(length):
     mm[idx] = idx
 # write to device
-cnt = do_dma(1, 0, length)
+cnt = do_dma_kernel(1, 0, length)
 print(f'polled {cnt} times for dma write')
 # read from device
 offset = 4096
-cnt = do_dma(0, offset, length)
+cnt = do_dma_kernel(0, offset, length)
 print(f'polled {cnt} times for dma read')
 # check bounce buffer
 for idx in range(length):
     assert mm[offset + idx] == idx
 
+memptr = ctypes.c_void_p()
+libc.posix_memalign(ctypes.byref(memptr), pagesize, bufsize)
+data = ctypes.cast(memptr, ctypes.POINTER(ctypes.c_ubyte))
 
+do_dma_user(0, memptr.value, length)
+for idx in range(length):
+    assert data[idx] == idx
