@@ -172,6 +172,37 @@ device_release(struct inode *inodep, struct file *filp)
     return 0;
 }
 
+static void
+start_dma(void *mmio, int dirn, dma_addr_t ram_busaddr, uint32_t edu_offset, uint32_t len,
+    int wait)
+{
+    uint32_t src_addr, dst_addr;
+    uint32_t edu_devaddr = 0x40000 + edu_offset;
+    uint32_t dmacmd = 0;
+
+    if (dirn == DMA_TO_DEVICE) {
+        src_addr = ram_busaddr;
+        dst_addr = edu_devaddr;
+        dmacmd = 1;
+    } else if (dirn == DMA_FROM_DEVICE) {
+        src_addr = edu_devaddr;
+        dst_addr = ram_busaddr;
+        dmacmd = 3;
+    }
+    if (dmacmd) {
+        writel(src_addr, mmio + 0x80);
+        writel(dst_addr, mmio + 0x88);
+        writel(len, mmio + 0x90);
+        writel(dmacmd, mmio + 0x98);
+    }
+
+    while (wait) {
+        uint32_t status = readl(mmio + 0x98);
+        if ((status & 1) == 0)
+            wait = 0;
+    }
+}
+
 static long
 device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
@@ -222,42 +253,84 @@ device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         }
         break;
     }
-    case MYMISCDEV_IOCTL_DMA:
+    case MYMISCDEV_IOCTL_DMA_KERNEL:
     {
-        struct mymiscdev_ioctl_dma param;
-        uint32_t src_addr;
-        uint32_t dst_addr;
+        struct mymiscdev_ioctl_dma_kernel param;
         uint32_t ram_busaddr;
-        uint32_t edu_devaddr;
-        uint32_t dmacmd;
+        uint32_t edu_offset;
         int err = copy_from_user(&param, (void*)arg, sizeof(param));
         if (err) {
             return -EFAULT;
         }
-        pr_debug("ioctl_dma %d %u\n", param.write, param.len);
+        pr_debug("ioctl_dma_kernel %d %u\n", param.write, param.len);
 
         if (param.len > 4096) {
             return -EINVAL;
         }
 
         ram_busaddr = (uint32_t)drvdata->da_coherent.dma_handle + param.offset;
-        edu_devaddr = 0x40000;
+        edu_offset = 0;
         pr_debug("ram_busaddr: 0x%x\n", ram_busaddr);
-        if (param.write) {
-            // dma from RAM to EDU
-            src_addr = ram_busaddr;
-            dst_addr = edu_devaddr;
-            dmacmd = 1;
-        } else {
-            // dma from EDU to RAM
-            src_addr = edu_devaddr;
-            dst_addr = ram_busaddr;
-            dmacmd = 3;
+        start_dma(
+            drvdata->iomem,
+            param.write ? DMA_TO_DEVICE : DMA_FROM_DEVICE,
+            ram_busaddr, edu_offset, param.len, 0);
+        retcode = 0;
+        break;
+    }
+    case MYMISCDEV_IOCTL_DMA_USER:
+    {
+        struct mymiscdev_ioctl_dma_user param;
+        int offset;
+        int num_pages;
+        int actual_pages;
+        struct page *one_page;
+        dma_addr_t dma_handle;
+        int dirn;
+
+        int err = copy_from_user(&param, (void*)arg, sizeof(param));
+        if (err) {
+            return -EFAULT;
         }
-        writel(src_addr, drvdata->iomem + 0x80);
-        writel(dst_addr, drvdata->iomem + 0x88);
-        writel(param.len, drvdata->iomem + 0x90);
-        writel(dmacmd, drvdata->iomem + 0x98);
+        pr_debug("ioctl_dma_user %d %u\n", param.write, param.len);
+
+        if (param.len == 0) {
+            return 0;
+        }
+
+        offset = offset_in_page(param.buffer);
+
+        if (param.len > 4096) {
+            return -EINVAL;
+        }
+        if (offset + param.len > 4096) {
+            return -EINVAL;
+        }
+
+        num_pages = 1;
+        actual_pages = get_user_pages_unlocked(
+            (unsigned long)param.buffer, num_pages, &one_page, FOLL_WRITE
+        );
+        if (actual_pages != num_pages) {
+            return -EAGAIN;
+        }
+
+        dirn = param.write ? DMA_TO_DEVICE : DMA_FROM_DEVICE;
+        dma_handle = dma_map_page(dev, one_page, offset, param.len, dirn);
+        if (dma_mapping_error(dev, dma_handle)) {
+            put_page(one_page);
+            return -EIO;
+        }
+
+        start_dma(drvdata->iomem, dirn, dma_handle, 0, param.len, 1);
+
+        dma_unmap_page(dev, dma_handle, param.len, dirn);
+
+        if (dirn == DMA_FROM_DEVICE) {
+            set_page_dirty(one_page);
+        }
+        put_page(one_page);
+
         retcode = 0;
         break;
     }
@@ -540,16 +613,16 @@ static int mypcidev_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
     if (!drvdata)
         return -ENOMEM;
 
-    pr_debug("pci_enable_device_mem: %d\n", err);
-    err = pci_enable_device_mem(pdev);
+    pr_debug("pcim_enable_device: %d\n", err);
+    err = pcim_enable_device(pdev);
     if (err) {
         return err;
     }
 
-    err = pci_request_region(pdev, bar, "mypcidev");
-    pr_debug("pci_request_region: %d\n", err);
+    // request and map
+    err = pcim_iomap_regions(pdev, BIT(bar), "mypcidev");
+    pr_debug("pcim_iomap_regions: %d\n", err);
     if (err) {
-        pci_disable_device(pdev);
         return err;
     }
 
@@ -557,13 +630,8 @@ static int mypcidev_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
     mmio_len = pci_resource_len(pdev, bar);
     pr_debug("bar %d: base 0x%lx; len 0x%lx\n", bar, mmio_base, mmio_len);
 
-    drvdata->iomem = pci_iomap(pdev, bar, 0);
-    pr_debug("pci_iomap: %p\n", drvdata->iomem);
-    if (!drvdata->iomem) {
-        pci_release_region(pdev, bar);
-        pci_disable_device(pdev);
-        return -EIO;
-    }
+    drvdata->iomem = pcim_iomap_table(pdev)[bar];
+    pr_debug("pcim_iomap_table: %p\n", drvdata->iomem);
 
     pci_set_master(pdev);
 
@@ -629,10 +697,6 @@ static void mypcidev_remove(struct pci_dev *pdev)
     struct DmaAddress *da;
 
     pr_debug("%s\n", __func__);
-
-    pci_iounmap(pdev, drvdata->iomem);
-    pci_release_region(pdev, 0);
-    pci_disable_device(pdev);
 
     misc_deregister(&drvdata->miscdev);
 

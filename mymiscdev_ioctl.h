@@ -18,10 +18,17 @@ struct mymiscdev_ioctl_reg
     uint32_t val;
 };
 
-struct mymiscdev_ioctl_dma
+struct mymiscdev_ioctl_dma_kernel
 {
     int write;      // from cpu's point of view
     uint32_t offset;    // offset of bounce buffer
+    uint32_t len;
+};
+
+struct mymiscdev_ioctl_dma_user
+{
+    int write;
+    char *buffer;
     uint32_t len;
 };
 
@@ -31,8 +38,11 @@ struct mymiscdev_ioctl_dma
 #define MYMISCDEV_IOCTL_REG \
     _IOWR(SAMPLE_IOCTL_MAGIC_NUMBER, 2, struct mymiscdev_ioctl_reg)
 
-#define MYMISCDEV_IOCTL_DMA \
-    _IOW(SAMPLE_IOCTL_MAGIC_NUMBER, 3, struct mymiscdev_ioctl_dma)
+#define MYMISCDEV_IOCTL_DMA_KERNEL \
+    _IOW(SAMPLE_IOCTL_MAGIC_NUMBER, 3, struct mymiscdev_ioctl_dma_kernel)
+
+#define MYMISCDEV_IOCTL_DMA_USER \
+    _IOW(SAMPLE_IOCTL_MAGIC_NUMBER, 4, struct mymiscdev_ioctl_dma_user)
 
 #endif
 
