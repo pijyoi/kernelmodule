@@ -69,6 +69,7 @@ struct TimeStamp {
 };
 
 static DECLARE_WAIT_QUEUE_HEAD(device_read_wait);
+static DECLARE_WAIT_QUEUE_HEAD(device_dma_wait);
 static atomic_t hardirq_cnt = ATOMIC_INIT(0);
 
 static int gpioButton = -1;    // specific to your setup
@@ -153,6 +154,7 @@ edu_irq_threadfn(int irq, void *dev_id)
 {
     struct mymiscdev_data *drvdata = dev_id;
     pr_debug("%s read int_status 0x%x\n", __func__, drvdata->int_status);
+    wake_up(&device_dma_wait);
     return IRQ_HANDLED;
 }
 
@@ -209,17 +211,17 @@ start_dma(void *mmio, int dirn, dma_addr_t ram_busaddr, uint32_t edu_offset, uin
         dst_addr = ram_busaddr;
         dmacmd = 3 | 4;
     }
-    if (dmacmd) {
-        writel(src_addr, mmio + 0x80);
-        writel(dst_addr, mmio + 0x88);
-        writel(len, mmio + 0x90);
-        writel(dmacmd, mmio + 0x98);
+    else {
+        return;
     }
 
-    while (wait) {
-        uint32_t status = readl(mmio + 0x98);
-        if ((status & 1) == 0)
-            wait = 0;
+    writel(src_addr, mmio + 0x80);
+    writel(dst_addr, mmio + 0x88);
+    writel(len, mmio + 0x90);
+    writel(dmacmd, mmio + 0x98);
+
+    if (wait) {
+        wait_event(device_dma_wait, (readl(mmio + 0x98) & 1) == 0);
     }
 }
 
